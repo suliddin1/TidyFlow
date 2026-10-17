@@ -1,0 +1,22 @@
+.root {
+    -fx-font-family: "Segoe UI", sans-serif;
+    -fx-font-size: 13px;
+}
+
+.toolbar-bar {
+    -fx-padding: 12;
+    -fx-spacing: 8;
+}
+
+.status-bar {
+    -fx-padding: 8 12 8 12;
+}
+
+.keep-badge {
+    -fx-background-color: #e6f4ea;
+    -fx-text-fill: #137333;
+    -fx-padding: 2 6 2 6;
+    -fx-background-radius: 4;
+    -fx-font-weight: bold;
+    -fx-font-size: 11px;
+}

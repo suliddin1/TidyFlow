@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.CheckBox?>
+<?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ProgressBar?>
+<?import javafx.scene.control.SplitPane?>
+<?import javafx.scene.control.Tab?>
+<?import javafx.scene.control.TabPane?>
+<?import javafx.scene.control.TableColumn?>
+<?import javafx.scene.control.TableView?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.control.TreeTableColumn?>
+<?import javafx.scene.control.TreeTableView?>
+<?import javafx.scene.layout.BorderPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+
+<BorderPane xmlns="http://javafx.com/javafx/21"
+            xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.tidyflow.ui.MainController"
+            prefWidth="980.0" prefHeight="620.0">
+
+    <center>
+        <TabPane tabClosingPolicy="UNAVAILABLE">
+            <!-- Tab 1: Organize -->
+            <Tab text="Organize">
+                <BorderPane>
+                    <top>
+                        <HBox alignment="CENTER_LEFT" styleClass="toolbar-bar" spacing="10.0">
+                            <Button fx:id="chooseFolderButton" text="Choose folder" onAction="#onChooseFolder"/>
+                            <Label fx:id="folderPathLabel" text="No folder selected" HBox.hgrow="ALWAYS"/>
+                            <Region HBox.hgrow="ALWAYS"/>
+                            <Button fx:id="scanButton" text="Scan" onAction="#onScan" disable="true"/>
+                            <Button fx:id="applyButton" text="Apply" onAction="#onApply" disable="true"/>
+                        </HBox>
+                    </top>
+                    <center>
+                        <TableView fx:id="previewTable">
+                            <BorderPane.margin>
+                                <Insets left="12.0" right="12.0" bottom="8.0"/>
+                            </BorderPane.margin>
+                            <placeholder>
+                                <Label text="Select a folder and click Scan to preview planned file moves."/>
+                            </placeholder>
+                            <columns>
+                                <TableColumn fx:id="fileNameColumn" text="File Name" prefWidth="240.0"/>
+                                <TableColumn fx:id="ruleColumn" text="Rule" prefWidth="150.0"/>
+                                <TableColumn fx:id="destinationColumn" text="Destination" prefWidth="520.0"/>
+                            </columns>
+                        </TableView>
+                    </center>
+                </BorderPane>
+            </Tab>
+
+            <!-- Tab 2: Duplicates -->
+            <Tab text="Duplicates">
+                <BorderPane>
+                    <top>
+                        <VBox spacing="8.0" styleClass="toolbar-bar">
+                            <HBox alignment="CENTER_LEFT" spacing="10.0">
+                                <Button fx:id="dedupeChooseFolderButton" text="Choose folder" onAction="#onChooseDedupeFolder"/>
+                                <Label fx:id="dedupeFolderPathLabel" text="No folder selected" HBox.hgrow="ALWAYS"/>
+                                <Region HBox.hgrow="ALWAYS"/>
+                                <Button fx:id="findDuplicatesButton" text="Find duplicates" onAction="#onFindDuplicates" disable="true"/>
+                                <Button fx:id="cancelDedupeButton" text="Cancel" onAction="#onCancelDedupe" disable="true"/>
+                            </HBox>
+                            <HBox alignment="CENTER_LEFT" spacing="12.0">
+                                <CheckBox fx:id="dedupeRecursiveCheckBox" text="Include subfolders" selected="true"/>
+                                <Label text="Min size:"/>
+                                <TextField fx:id="dedupeMinSizeField" text="0" prefWidth="65.0"/>
+                                <ComboBox fx:id="dedupeSizeUnitCombo" prefWidth="75.0"/>
+                                <Label text="Keeper strategy:"/>
+                                <ComboBox fx:id="dedupeStrategyCombo" prefWidth="155.0"/>
+                                <Region HBox.hgrow="ALWAYS"/>
+                                <ProgressBar fx:id="dedupeProgressBar" prefWidth="140.0" progress="0.0" visible="false"/>
+                                <Label fx:id="dedupeProgressLabel" text=""/>
+                            </HBox>
+                        </VBox>
+                    </top>
+                    <center>
+                        <TreeTableView fx:id="dedupeTreeTable" showRoot="false">
+                            <BorderPane.margin>
+                                <Insets left="12.0" right="12.0" bottom="8.0"/>
+                            </BorderPane.margin>
+                            <placeholder>
+                                <Label text="Choose a folder and click 'Find duplicates' to scan for identical files."/>
+                            </placeholder>
+                            <columns>
+                                <TreeTableColumn fx:id="dedupeRemoveColumn" text="Remove" prefWidth="110.0"/>
+                                <TreeTableColumn fx:id="dedupeNameColumn" text="Group / File Name" prefWidth="250.0"/>
+                                <TreeTableColumn fx:id="dedupeFolderColumn" text="Folder" prefWidth="290.0"/>
+                                <TreeTableColumn fx:id="dedupeSizeColumn" text="Size / Wasted" prefWidth="140.0"/>
+                                <TreeTableColumn fx:id="dedupeModifiedColumn" text="Modified Date" prefWidth="150.0"/>
+                            </columns>
+                        </TreeTableView>
+                    </center>
+                    <bottom>
+                        <HBox alignment="CENTER_LEFT" styleClass="toolbar-bar" spacing="12.0">
+                            <Label fx:id="dedupeSummaryLabel" text="0 groups | 0 files selected | 0 B to free"/>
+                            <Region HBox.hgrow="ALWAYS"/>
+                            <Button fx:id="removeDuplicatesButton" text="Move selected to Recycle Bin"
+                                    onAction="#onRemoveSelectedDuplicates" disable="true"/>
+                        </HBox>
+                    </bottom>
+                </BorderPane>
+            </Tab>
+
+            <!-- Tab 3: Rules -->
+            <Tab text="Rules">
+                <BorderPane>
+                    <top>
+                        <HBox alignment="CENTER_LEFT" styleClass="toolbar-bar" spacing="8.0">
+                            <Button fx:id="addRuleButton" text="Add" onAction="#onAddRule"/>
+                            <Button fx:id="editRuleButton" text="Edit" onAction="#onEditRule" disable="true"/>
+                            <Button fx:id="duplicateRuleButton" text="Duplicate" onAction="#onDuplicateRule" disable="true"/>
+                            <Button fx:id="deleteRuleButton" text="Delete" onAction="#onDeleteRule" disable="true"/>
+                            <Button fx:id="moveRuleUpButton" text="Move up" onAction="#onMoveRuleUp" disable="true"/>
+                            <Button fx:id="moveRuleDownButton" text="Move down" onAction="#onMoveRuleDown" disable="true"/>
+                            <Region HBox.hgrow="ALWAYS"/>
+                            <Button fx:id="resetRulesButton" text="Reset to defaults" onAction="#onResetRulesToDefaults"/>
+                        </HBox>
+                    </top>
+                    <center>
+                        <TableView fx:id="rulesTable">
+                            <BorderPane.margin>
+                                <Insets left="12.0" right="12.0" bottom="8.0"/>
+                            </BorderPane.margin>
+                            <placeholder>
+                                <Label text="No rules configured."/>
+                            </placeholder>
+                            <columns>
+                                <TableColumn fx:id="ruleEnabledColumn" text="Enabled" prefWidth="75.0"/>
+                                <TableColumn fx:id="rulePriorityColumn" text="Priority" prefWidth="70.0"/>
+                                <TableColumn fx:id="ruleNameColumn" text="Name" prefWidth="160.0"/>
+                                <TableColumn fx:id="ruleConditionsColumn" text="Conditions" prefWidth="390.0"/>
+                                <TableColumn fx:id="ruleTargetColumn" text="Target Folder" prefWidth="230.0"/>
+                            </columns>
+                        </TableView>
+                    </center>
+                    <bottom>
+                        <VBox spacing="6.0" styleClass="toolbar-bar">
+                            <Label text="Try it (dry-run preview against current rules):" style="-fx-font-weight: bold;"/>
+                            <HBox alignment="CENTER_LEFT" spacing="10.0">
+                                <Label text="File name:"/>
+                                <TextField fx:id="tryFileNameField" promptText="e.g. photo.jpg" prefWidth="170.0"/>
+                                <Label text="Size:"/>
+                                <TextField fx:id="trySizeField" text="10" prefWidth="65.0"/>
+                                <ComboBox fx:id="trySizeUnitCombo" prefWidth="75.0"/>
+                                <Label text="Age (days):"/>
+                                <TextField fx:id="tryAgeDaysField" text="0" prefWidth="55.0"/>
+                                <Label text="Result:"/>
+                                <Label fx:id="tryResultLabel" text="no rule matches" style="-fx-font-weight: bold;"/>
+                            </HBox>
+                        </VBox>
+                    </bottom>
+                </BorderPane>
+            </Tab>
+
+            <!-- Tab 4: History -->
+            <Tab text="History" onSelectionChanged="#onHistoryTabSelected">
+                <BorderPane>
+                    <top>
+                        <HBox alignment="CENTER_LEFT" styleClass="toolbar-bar" spacing="10.0">
+                            <StackPane fx:id="undoBatchWrapper">
+                                <Button fx:id="undoBatchButton" text="Undo batch" onAction="#onUndoBatch" disable="true"/>
+                            </StackPane>
+                            <StackPane fx:id="undoFileWrapper">
+                                <Button fx:id="undoFileButton" text="Undo selected file" onAction="#onUndoSelectedFile" disable="true"/>
+                            </StackPane>
+                            <Region HBox.hgrow="ALWAYS"/>
+                            <Button fx:id="refreshHistoryButton" text="Refresh" onAction="#onRefreshHistory"/>
+                        </HBox>
+                    </top>
+                    <center>
+                        <SplitPane dividerPositions="0.38">
+                            <BorderPane.margin>
+                                <Insets left="12.0" right="12.0" bottom="8.0"/>
+                            </BorderPane.margin>
+                            <TableView fx:id="batchesTable">
+                                <placeholder>
+                                    <Label text="No recorded batches yet."/>
+                                </placeholder>
+                                <columns>
+                                    <TableColumn fx:id="batchDateColumn" text="Date/Time &amp; Type" prefWidth="185.0"/>
+                                    <TableColumn fx:id="batchFilesColumn" text="Files" prefWidth="60.0"/>
+                                    <TableColumn fx:id="batchSizeColumn" text="Total Size" prefWidth="90.0"/>
+                                </columns>
+                            </TableView>
+
+                            <TableView fx:id="operationsTable">
+                                <placeholder>
+                                    <Label text="Select a batch to view its operations."/>
+                                </placeholder>
+                                <columns>
+                                    <TableColumn fx:id="opFileNameColumn" text="File Name" prefWidth="140.0"/>
+                                    <TableColumn fx:id="opRuleColumn" text="Rule / Action" prefWidth="105.0"/>
+                                    <TableColumn fx:id="opFromColumn" text="From" prefWidth="140.0"/>
+                                    <TableColumn fx:id="opToColumn" text="To" prefWidth="135.0"/>
+                                    <TableColumn fx:id="opStatusColumn" text="Status" prefWidth="95.0"/>
+                                </columns>
+                            </TableView>
+                        </SplitPane>
+                    </center>
+                </BorderPane>
+            </Tab>
+        </TabPane>
+    </center>
+
+    <bottom>
+        <HBox alignment="CENTER_LEFT" styleClass="status-bar">
+            <Label fx:id="statusLabel" text="Ready"/>
+        </HBox>
+    </bottom>
+</BorderPane>
