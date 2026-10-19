@@ -22,7 +22,8 @@ public class DatabaseManager {
 
     private static final List<MigrationScript> MIGRATIONS = List.of(
             new MigrationScript(1, "V1__init.sql", "/db/migrations/V1__init.sql"),
-            new MigrationScript(2, "V2__dedupe_and_index.sql", "/db/migrations/V2__dedupe_and_index.sql")
+            new MigrationScript(2, "V2__dedupe_and_index.sql", "/db/migrations/V2__dedupe_and_index.sql"),
+            new MigrationScript(3, "V3__stats_indexes.sql", "/db/migrations/V3__stats_indexes.sql")
     );
 
     private final Path dbPath;
