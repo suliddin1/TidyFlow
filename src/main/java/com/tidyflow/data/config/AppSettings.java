@@ -13,7 +13,8 @@ public record AppSettings(
         boolean showNotifications,
         boolean minimizeToTray,
         boolean startWithWindows,
-        ScheduleConfig schedule
+        ScheduleConfig schedule,
+        ThemeMode theme
 ) {
     public static final int DEFAULT_SETTLE_SECONDS = 5;
     public static final int MIN_SETTLE_SECONDS = 3;
@@ -27,6 +28,30 @@ public record AppSettings(
         Objects.requireNonNull(watchedFolders, "watchedFolders must not be null");
         Objects.requireNonNull(schedule, "schedule must not be null");
         watchedFolders = List.copyOf(watchedFolders);
+        if (theme == null) {
+            theme = ThemeMode.SYSTEM;
+        }
+    }
+
+    public AppSettings(
+            List<WatchedFolderConfig> watchedFolders,
+            int settleSeconds,
+            int massMoveGuardThreshold,
+            boolean showNotifications,
+            boolean minimizeToTray,
+            boolean startWithWindows,
+            ScheduleConfig schedule
+    ) {
+        this(
+                watchedFolders,
+                settleSeconds,
+                massMoveGuardThreshold,
+                showNotifications,
+                minimizeToTray,
+                startWithWindows,
+                schedule,
+                ThemeMode.SYSTEM
+        );
     }
 
     public static AppSettings defaults() {
@@ -37,7 +62,8 @@ public record AppSettings(
                 true,
                 true,
                 false,
-                ScheduleConfig.defaults()
+                ScheduleConfig.defaults(),
+                ThemeMode.SYSTEM
         );
     }
 }

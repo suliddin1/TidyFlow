@@ -1,0 +1,27 @@
+/* Light theme palette (JavaFX looked-up colors) */
+.root {
+    -tf-bg: #f8fafc;
+    -tf-surface: #ffffff;
+    -tf-surface-alt: #f1f5f9;
+    -tf-text: #0f172a;
+    -tf-muted-text: #475569;
+    -tf-accent: #2563eb;
+    -tf-accent-hover: #1d4ed8;
+    -tf-accent-subtle: #dbeafe;
+    -tf-on-accent: #ffffff;
+    -tf-danger: #dc2626;
+    -tf-danger-hover: #b91c1c;
+    -tf-on-danger: #ffffff;
+    -tf-border: #cbd5e1;
+    -tf-badge-bg: #dcfce7;
+    -tf-badge-text: #166534;
+
+    -fx-base: -tf-surface;
+    -fx-background: -tf-bg;
+    -fx-control-inner-background: -tf-surface;
+    -fx-control-inner-background-alt: -tf-surface-alt;
+    -fx-text-background-color: -tf-text;
+    -fx-accent: -tf-accent;
+    -fx-focus-color: -tf-accent;
+    -fx-faint-focus-color: transparent;
+}

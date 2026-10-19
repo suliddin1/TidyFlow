@@ -1,5 +1,7 @@
 package com.tidyflow.data.config;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -7,6 +9,7 @@ import java.util.List;
 /**
  * Jackson serialization DTOs for settings.json.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public final class SettingsConfigDocument {
 
     public static final int CURRENT_VERSION = 1;
@@ -19,6 +22,7 @@ public final class SettingsConfigDocument {
     private boolean minimizeToTray = true;
     private boolean startWithWindows = false;
     private ScheduleDto schedule = new ScheduleDto(false, ScheduleConfig.DEFAULT_TIME_OF_DAY);
+    private ThemeMode theme = ThemeMode.SYSTEM;
 
     public SettingsConfigDocument() {
     }
@@ -87,6 +91,14 @@ public final class SettingsConfigDocument {
         this.schedule = schedule;
     }
 
+    public ThemeMode getTheme() {
+        return theme;
+    }
+
+    public void setTheme(ThemeMode theme) {
+        this.theme = theme;
+    }
+
     public static SettingsConfigDocument fromDomain(AppSettings settings) {
         SettingsConfigDocument doc = new SettingsConfigDocument();
         doc.setVersion(CURRENT_VERSION);
@@ -99,6 +111,7 @@ public final class SettingsConfigDocument {
         doc.setMinimizeToTray(settings.minimizeToTray());
         doc.setStartWithWindows(settings.startWithWindows());
         doc.setSchedule(ScheduleDto.fromDomain(settings.schedule()));
+        doc.setTheme(settings.theme() != null ? settings.theme() : ThemeMode.SYSTEM);
         return doc;
     }
 
@@ -120,7 +133,8 @@ public final class SettingsConfigDocument {
                 showNotifications,
                 minimizeToTray,
                 startWithWindows,
-                schedule.toDomain()
+                schedule.toDomain(),
+                theme != null ? theme : ThemeMode.SYSTEM
         );
     }
 

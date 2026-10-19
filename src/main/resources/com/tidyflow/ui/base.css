@@ -1,0 +1,357 @@
+/* TidyFlow base design system: 8 px spacing grid, system typography, and looked-up theme tokens */
+.root {
+    -fx-font-family: "Segoe UI", "System", sans-serif;
+    -fx-font-size: 13px;
+    -fx-background-color: -tf-bg;
+    -fx-text-fill: -tf-text;
+}
+
+/* Typography classes */
+.page-title {
+    -fx-font-size: 20px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -tf-text;
+}
+
+.section-title {
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -tf-text;
+}
+
+.body-text {
+    -fx-font-size: 13px;
+    -fx-text-fill: -tf-text;
+}
+
+.muted-text {
+    -fx-font-size: 12px;
+    -fx-text-fill: -tf-muted-text;
+}
+
+.validation-error {
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -tf-danger;
+}
+
+/* Layout bars on 8 px grid */
+.toolbar-bar {
+    -fx-padding: 12px 16px 12px 16px;
+    -fx-spacing: 8px;
+    -fx-background-color: -tf-surface;
+    -fx-border-color: transparent transparent -tf-border transparent;
+    -fx-border-width: 0 0 1px 0;
+}
+
+.status-bar {
+    -fx-padding: 8px 16px 8px 16px;
+    -fx-background-color: -tf-surface;
+    -fx-border-color: -tf-border transparent transparent transparent;
+    -fx-border-width: 1px 0 0 0;
+}
+
+/* Dashboard cards (.card) */
+.card {
+    -fx-background-color: -tf-surface;
+    -fx-background-radius: 8px;
+    -fx-border-color: -tf-border;
+    -fx-border-radius: 8px;
+    -fx-border-width: 1px;
+    -fx-padding: 16px;
+    -fx-spacing: 6px;
+}
+
+.card-label {
+    -fx-font-size: 12px;
+    -fx-text-fill: -tf-muted-text;
+}
+
+.card-value {
+    -fx-font-size: 22px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -tf-text;
+}
+
+/* TabPane */
+.tab-pane > .tab-header-area {
+    -fx-padding: 8px 16px 0px 16px;
+}
+
+.tab-pane > .tab-header-area > .tab-header-background {
+    -fx-background-color: -tf-surface;
+    -fx-border-color: transparent transparent -tf-border transparent;
+    -fx-border-width: 0 0 1px 0;
+}
+
+.tab-pane .tab {
+    -fx-background-color: transparent;
+    -fx-padding: 8px 16px 8px 16px;
+    -fx-background-radius: 6px 6px 0 0;
+    -fx-border-color: transparent transparent transparent transparent;
+    -fx-border-width: 0 0 2px 0;
+}
+
+.tab-pane .tab .tab-label {
+    -fx-text-fill: -tf-muted-text;
+    -fx-font-weight: bold;
+}
+
+.tab-pane .tab:hover .tab-label {
+    -fx-text-fill: -tf-text;
+}
+
+.tab-pane .tab:selected {
+    -fx-background-color: -tf-bg;
+    -fx-border-color: transparent transparent -tf-accent transparent;
+    -fx-border-width: 0 0 2px 0;
+}
+
+.tab-pane .tab:selected .tab-label {
+    -fx-text-fill: -tf-accent;
+}
+
+.tab-pane:focused > .tab-header-area > .headers-region > .tab:selected .focus-indicator {
+    -fx-border-color: -tf-accent;
+    -fx-border-width: 1px;
+    -fx-border-radius: 4px;
+}
+
+/* Buttons: default/secondary, primary, danger, and toggle buttons */
+.button, .toggle-button {
+    -fx-background-color: -tf-surface;
+    -fx-text-fill: -tf-text;
+    -fx-border-color: -tf-border;
+    -fx-border-radius: 6px;
+    -fx-background-radius: 6px;
+    -fx-padding: 6px 14px 6px 14px;
+    -fx-cursor: hand;
+}
+
+.button:hover, .toggle-button:hover {
+    -fx-background-color: -tf-surface-alt;
+}
+
+.button:focused, .toggle-button:focused,
+.text-field:focused, .combo-box:focused, .check-box:focused > .box {
+    -fx-border-color: -tf-accent;
+    -fx-border-width: 2px;
+}
+
+.button.button-primary, .toggle-button:selected {
+    -fx-background-color: -tf-accent;
+    -fx-text-fill: -tf-on-accent;
+    -fx-border-color: -tf-accent;
+    -fx-font-weight: bold;
+}
+
+.button.button-primary:hover, .toggle-button:selected:hover {
+    -fx-background-color: -tf-accent-hover;
+    -fx-border-color: -tf-accent-hover;
+}
+
+.button.button-secondary {
+    -fx-background-color: -tf-surface;
+    -fx-text-fill: -tf-text;
+    -fx-border-color: -tf-border;
+}
+
+.button.button-danger {
+    -fx-background-color: -tf-danger;
+    -fx-text-fill: -tf-on-danger;
+    -fx-border-color: -tf-danger;
+    -fx-font-weight: bold;
+}
+
+.button.button-danger:hover {
+    -fx-background-color: -tf-danger-hover;
+    -fx-border-color: -tf-danger-hover;
+}
+
+/* TextField, ComboBox, CheckBox */
+.text-field, .combo-box-base {
+    -fx-background-color: -tf-surface;
+    -fx-text-fill: -tf-text;
+    -fx-prompt-text-fill: -tf-muted-text;
+    -fx-border-color: -tf-border;
+    -fx-border-radius: 6px;
+    -fx-background-radius: 6px;
+    -fx-padding: 5px 8px 5px 8px;
+}
+
+.combo-box .list-cell {
+    -fx-text-fill: -tf-text;
+    -fx-background-color: -tf-surface;
+}
+
+.combo-box-popup .list-view .list-cell:hover,
+.combo-box-popup .list-view .list-cell:filled:selected {
+    -fx-background-color: -tf-accent-subtle;
+    -fx-text-fill: -tf-text;
+}
+
+.check-box {
+    -fx-text-fill: -tf-text;
+}
+
+.check-box > .box {
+    -fx-background-color: -tf-surface;
+    -fx-border-color: -tf-border;
+    -fx-border-radius: 4px;
+    -fx-background-radius: 4px;
+}
+
+.check-box:selected > .box {
+    -fx-background-color: -tf-accent;
+    -fx-border-color: -tf-accent;
+}
+
+.check-box:selected > .box > .mark {
+    -fx-background-color: -tf-on-accent;
+}
+
+/* TableView, TreeTableView, ListView */
+.table-view, .tree-table-view, .list-view {
+    -fx-background-color: -tf-surface;
+    -fx-border-color: -tf-border;
+    -fx-border-radius: 6px;
+    -fx-background-radius: 6px;
+}
+
+.table-view .column-header-background,
+.tree-table-view .column-header-background {
+    -fx-background-color: -tf-surface-alt;
+    -fx-border-color: transparent transparent -tf-border transparent;
+    -fx-border-width: 0 0 1px 0;
+}
+
+.table-view .column-header,
+.tree-table-view .column-header {
+    -fx-background-color: transparent;
+    -fx-size: 34px;
+}
+
+.table-view .column-header .label,
+.tree-table-view .column-header .label {
+    -fx-text-fill: -tf-text;
+    -fx-font-weight: bold;
+    -fx-alignment: CENTER_LEFT;
+}
+
+.table-row-cell, .tree-table-row-cell, .list-cell {
+    -fx-background-color: -tf-surface;
+    -fx-text-fill: -tf-text;
+    -fx-cell-size: 34px;
+}
+
+.table-row-cell:odd, .tree-table-row-cell:odd {
+    -fx-background-color: -tf-surface-alt;
+}
+
+.table-row-cell:hover, .tree-table-row-cell:hover, .list-cell:filled:hover {
+    -fx-background-color: -tf-accent-subtle;
+}
+
+.table-row-cell:filled:selected,
+.tree-table-row-cell:filled:selected,
+.list-cell:filled:selected {
+    -fx-background-color: -tf-accent-subtle;
+    -fx-text-fill: -tf-text;
+}
+
+.table-view .table-cell,
+.tree-table-view .tree-table-cell {
+    -fx-text-fill: -tf-text;
+    -fx-alignment: CENTER_LEFT;
+    -fx-border-color: transparent;
+}
+
+/* ProgressBar */
+.progress-bar > .track {
+    -fx-background-color: -tf-surface-alt;
+    -fx-background-radius: 6px;
+}
+
+.progress-bar > .bar {
+    -fx-background-color: -tf-accent;
+    -fx-background-radius: 6px;
+    -fx-padding: 4px;
+}
+
+/* ScrollBars & ScrollPane */
+.scroll-pane {
+    -fx-background-color: transparent;
+    -fx-background: -tf-bg;
+}
+
+.scroll-bar:vertical, .scroll-bar:horizontal {
+    -fx-background-color: transparent;
+}
+
+.scroll-bar .thumb {
+    -fx-background-color: -tf-border;
+    -fx-background-radius: 6px;
+}
+
+/* Tooltips */
+.tooltip {
+    -fx-background-color: -tf-surface;
+    -fx-text-fill: -tf-text;
+    -fx-border-color: -tf-border;
+    -fx-border-radius: 4px;
+    -fx-background-radius: 4px;
+    -fx-padding: 6px 10px 6px 10px;
+    -fx-font-size: 12px;
+}
+
+/* Charts */
+.chart {
+    -fx-padding: 8px;
+    -fx-background-color: transparent;
+}
+
+.chart-plot-background {
+    -fx-background-color: -tf-surface;
+    -fx-border-color: -tf-border;
+}
+
+.chart-title, .axis-label {
+    -fx-text-fill: -tf-text;
+    -fx-font-weight: bold;
+}
+
+.axis {
+    -fx-tick-label-fill: -tf-muted-text;
+}
+
+.chart-vertical-grid-lines, .chart-horizontal-grid-lines {
+    -fx-stroke: -tf-border;
+}
+
+.default-color0.chart-bar {
+    -fx-bar-fill: -tf-accent;
+}
+
+/* Dialogs & Alerts */
+.dialog-pane {
+    -fx-background-color: -tf-surface;
+}
+
+.dialog-pane .label {
+    -fx-text-fill: -tf-text;
+}
+
+.dialog-pane:header .header-panel {
+    -fx-background-color: -tf-surface-alt;
+    -fx-border-color: transparent transparent -tf-border transparent;
+}
+
+/* Badges */
+.keep-badge {
+    -fx-background-color: -tf-badge-bg;
+    -fx-text-fill: -tf-badge-text;
+    -fx-padding: 2px 6px 2px 6px;
+    -fx-background-radius: 4px;
+    -fx-font-weight: bold;
+    -fx-font-size: 11px;
+}

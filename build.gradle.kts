@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.tidyflow"
-version = "0.1.0"
+version = "1.0.0"
 
 repositories {
     mavenCentral()
@@ -12,6 +12,12 @@ repositories {
 
 val javafxVersion = "21.0.5"
 val javafxPlatform = "win"
+
+sourceSets {
+    create("tools") {
+        java.srcDir("src/tools/java")
+    }
+}
 
 dependencies {
     implementation("org.openjfx:javafx-base:$javafxVersion:$javafxPlatform")
@@ -30,6 +36,22 @@ dependencies {
 tasks.withType<JavaCompile>().configureEach {
     options.encoding = "UTF-8"
     options.release.set(21)
+}
+
+tasks.named<ProcessResources>("processResources") {
+    val appVersion = project.version.toString()
+    inputs.property("projectVersion", appVersion)
+    filesMatching("version.properties") {
+        expand(mapOf("projectVersion" to appVersion))
+    }
+}
+
+tasks.register<JavaExec>("generateIcons") {
+    group = "build"
+    description = "Generates PNG app icons (16..256 px) and multi-size icon.ico using Java2D."
+    classpath = sourceSets["tools"].runtimeClasspath
+    mainClass.set("com.tidyflow.tools.IconGeneratorMain")
+    args(project.projectDir.absolutePath)
 }
 
 application {
