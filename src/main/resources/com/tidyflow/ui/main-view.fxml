@@ -5,6 +5,7 @@
 <?import javafx.scene.control.CheckBox?>
 <?import javafx.scene.control.ComboBox?>
 <?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ListView?>
 <?import javafx.scene.control.ProgressBar?>
 <?import javafx.scene.control.SplitPane?>
 <?import javafx.scene.control.Tab?>
@@ -23,12 +24,12 @@
 <BorderPane xmlns="http://javafx.com/javafx/21"
             xmlns:fx="http://javafx.com/fxml/1"
             fx:controller="com.tidyflow.ui.MainController"
-            prefWidth="980.0" prefHeight="620.0">
+            prefWidth="980.0" prefHeight="640.0">
 
     <center>
-        <TabPane tabClosingPolicy="UNAVAILABLE">
+        <TabPane fx:id="mainTabPane" tabClosingPolicy="UNAVAILABLE">
             <!-- Tab 1: Organize -->
-            <Tab text="Organize">
+            <Tab fx:id="organizeTab" text="Organize">
                 <BorderPane>
                     <top>
                         <HBox alignment="CENTER_LEFT" styleClass="toolbar-bar" spacing="10.0">
@@ -58,7 +59,7 @@
             </Tab>
 
             <!-- Tab 2: Duplicates -->
-            <Tab text="Duplicates">
+            <Tab fx:id="duplicatesTab" text="Duplicates">
                 <BorderPane>
                     <top>
                         <VBox spacing="8.0" styleClass="toolbar-bar">
@@ -111,7 +112,7 @@
             </Tab>
 
             <!-- Tab 3: Rules -->
-            <Tab text="Rules">
+            <Tab fx:id="rulesTab" text="Rules">
                 <BorderPane>
                     <top>
                         <HBox alignment="CENTER_LEFT" styleClass="toolbar-bar" spacing="8.0">
@@ -161,8 +162,79 @@
                 </BorderPane>
             </Tab>
 
-            <!-- Tab 4: History -->
-            <Tab text="History" onSelectionChanged="#onHistoryTabSelected">
+            <!-- Tab 4: Automation -->
+            <Tab fx:id="automationTab" text="Automation">
+                <BorderPane>
+                    <top>
+                        <VBox spacing="8.0" styleClass="toolbar-bar">
+                            <HBox alignment="CENTER_LEFT" spacing="12.0">
+                                <Button fx:id="pauseResumeButton" text="Pause Watching"
+                                        onAction="#onTogglePauseWatching"
+                                        style="-fx-font-weight: bold; -fx-padding: 6 16 6 16;"/>
+                                <Label fx:id="automationStatusLabel" text="Watching 0 folders"
+                                       style="-fx-font-weight: bold;"/>
+                                <Region HBox.hgrow="ALWAYS"/>
+                                <Button fx:id="addWatchedFolderButton" text="Add folder (Browse)" onAction="#onAddWatchedFolder"/>
+                                <Button fx:id="addDownloadsFolderButton" text="Add my Downloads folder" onAction="#onAddDownloadsFolder"/>
+                                <Button fx:id="removeWatchedFolderButton" text="Remove" onAction="#onRemoveWatchedFolder" disable="true"/>
+                            </HBox>
+                        </VBox>
+                    </top>
+                    <center>
+                        <SplitPane dividerPositions="0.58">
+                            <BorderPane.margin>
+                                <Insets left="12.0" right="12.0" bottom="8.0"/>
+                            </BorderPane.margin>
+                            <TableView fx:id="watchedFoldersTable">
+                                <placeholder>
+                                    <Label text="No watched folders yet. Click 'Add my Downloads folder' or 'Add folder (Browse)'."/>
+                                </placeholder>
+                                <columns>
+                                    <TableColumn fx:id="watchedPathColumn" text="Folder Path" prefWidth="290.0"/>
+                                    <TableColumn fx:id="watchedModeColumn" text="Mode" prefWidth="125.0"/>
+                                    <TableColumn fx:id="watchedStatusColumn" text="Status" prefWidth="115.0"/>
+                                </columns>
+                            </TableView>
+
+                            <VBox spacing="6.0">
+                                <padding>
+                                    <Insets top="6.0" right="6.0" bottom="6.0" left="6.0"/>
+                                </padding>
+                                <Label text="Recent Activity (last 50 events)" style="-fx-font-weight: bold;"/>
+                                <ListView fx:id="activityListView" VBox.vgrow="ALWAYS">
+                                    <placeholder>
+                                        <Label text="No background activity yet."/>
+                                    </placeholder>
+                                </ListView>
+                            </VBox>
+                        </SplitPane>
+                    </center>
+                    <bottom>
+                        <VBox spacing="8.0" styleClass="toolbar-bar">
+                            <HBox alignment="CENTER_LEFT" spacing="14.0">
+                                <Label text="Settle seconds (3-60):"/>
+                                <TextField fx:id="settleSecondsField" text="5" prefWidth="55.0"/>
+                                <Label text="Mass-move guard (5-1000):"/>
+                                <TextField fx:id="massMoveGuardField" text="50" prefWidth="65.0"/>
+                                <CheckBox fx:id="showNotificationsCheckBox" text="Notifications" selected="true"/>
+                                <CheckBox fx:id="minimizeToTrayCheckBox" text="Minimize to tray" selected="true"/>
+                                <StackPane fx:id="startWithWindowsWrapper">
+                                    <CheckBox fx:id="startWithWindowsCheckBox" text="Start with Windows"/>
+                                </StackPane>
+                            </HBox>
+                            <HBox alignment="CENTER_LEFT" spacing="12.0">
+                                <CheckBox fx:id="scheduleEnabledCheckBox" text="Run daily schedule at (HH:mm):"/>
+                                <TextField fx:id="scheduleTimeField" text="09:00" prefWidth="75.0" promptText="HH:mm"/>
+                                <Button fx:id="saveAutomationSettingsButton" text="Save settings" onAction="#onSaveAutomationSettings"/>
+                                <Label fx:id="automationValidationLabel" text="" style="-fx-text-fill: #b91c1c; -fx-font-weight: bold;"/>
+                            </HBox>
+                        </VBox>
+                    </bottom>
+                </BorderPane>
+            </Tab>
+
+            <!-- Tab 5: History -->
+            <Tab fx:id="historyTab" text="History" onSelectionChanged="#onHistoryTabSelected">
                 <BorderPane>
                     <top>
                         <HBox alignment="CENTER_LEFT" styleClass="toolbar-bar" spacing="10.0">

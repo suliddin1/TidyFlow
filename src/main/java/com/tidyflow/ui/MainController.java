@@ -1,5 +1,7 @@
 package com.tidyflow.ui;
 
+import com.tidyflow.app.AutostartService;
+import com.tidyflow.app.WindowsRegistryAutostartService;
 import com.tidyflow.core.dedupe.DedupeProgress;
 import com.tidyflow.core.dedupe.DedupeRemovalSummary;
 import com.tidyflow.core.dedupe.DedupeScanOptions;
@@ -22,14 +24,27 @@ import com.tidyflow.core.rules.RulePriorityManager;
 import com.tidyflow.core.rules.RuleValidator;
 import com.tidyflow.core.scanner.FileItem;
 import com.tidyflow.core.scanner.FolderScanner;
+import com.tidyflow.core.watcher.ActivityLogEntry;
+import com.tidyflow.core.watcher.AutomationListener;
+import com.tidyflow.core.watcher.AutomationPipeline;
+import com.tidyflow.core.watcher.DailySchedulerService;
+import com.tidyflow.core.watcher.FolderWatcherService;
+import com.tidyflow.core.watcher.WatchedFolderStatus;
 import com.tidyflow.data.BatchRecord;
 import com.tidyflow.data.BatchRepository;
 import com.tidyflow.data.OperationActionType;
 import com.tidyflow.data.OperationRecord;
 import com.tidyflow.data.OperationRepository;
 import com.tidyflow.data.OperationStatus;
+import com.tidyflow.data.config.AppSettings;
 import com.tidyflow.data.config.RuleLoadResult;
 import com.tidyflow.data.config.RuleRepository;
+import com.tidyflow.data.config.ScheduleConfig;
+import com.tidyflow.data.config.SettingsLoadResult;
+import com.tidyflow.data.config.SettingsRepository;
+import com.tidyflow.data.config.SettingsValidator;
+import com.tidyflow.data.config.WatchMode;
+import com.tidyflow.data.config.WatchedFolderConfig;
 import com.tidyflow.util.FileNameUtils;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleObjectProperty;
@@ -45,7 +60,10 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListView;
 import javafx.scene.control.ProgressBar;
+import javafx.scene.control.Tab;
+import javafx.scene.control.TabPane;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
@@ -76,13 +94,29 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Controller for the main TidyFlow window (Organize, Duplicates, Rules, and History tabs).
+ * Controller for the main TidyFlow window (Organize, Duplicates, Rules, Automation, and History tabs).
  */
 public class MainController {
 
     private static final String RECYCLE_BIN_TOOLTIP = "Restore from the Windows Recycle Bin";
+    private static final String AUTOSTART_UNAVAILABLE_TOOLTIP = "Available in the installed version";
     private static final DateTimeFormatter DATE_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
+    private static final DateTimeFormatter ACTIVITY_TIME_FORMATTER =
+            DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault());
+
+    @FXML
+    private TabPane mainTabPane;
+    @FXML
+    private Tab organizeTab;
+    @FXML
+    private Tab duplicatesTab;
+    @FXML
+    private Tab rulesTab;
+    @FXML
+    private Tab automationTab;
+    @FXML
+    private Tab historyTab;
 
     // Organize tab controls
     @FXML
@@ -178,6 +212,48 @@ public class MainController {
     @FXML
     private Label tryResultLabel;
 
+    // Automation tab controls
+    @FXML
+    private Button pauseResumeButton;
+    @FXML
+    private Label automationStatusLabel;
+    @FXML
+    private Button addWatchedFolderButton;
+    @FXML
+    private Button addDownloadsFolderButton;
+    @FXML
+    private Button removeWatchedFolderButton;
+    @FXML
+    private TableView<WatchedFolderConfig> watchedFoldersTable;
+    @FXML
+    private TableColumn<WatchedFolderConfig, String> watchedPathColumn;
+    @FXML
+    private TableColumn<WatchedFolderConfig, WatchedFolderConfig> watchedModeColumn;
+    @FXML
+    private TableColumn<WatchedFolderConfig, String> watchedStatusColumn;
+    @FXML
+    private ListView<String> activityListView;
+    @FXML
+    private TextField settleSecondsField;
+    @FXML
+    private TextField massMoveGuardField;
+    @FXML
+    private CheckBox showNotificationsCheckBox;
+    @FXML
+    private CheckBox minimizeToTrayCheckBox;
+    @FXML
+    private StackPane startWithWindowsWrapper;
+    @FXML
+    private CheckBox startWithWindowsCheckBox;
+    @FXML
+    private CheckBox scheduleEnabledCheckBox;
+    @FXML
+    private TextField scheduleTimeField;
+    @FXML
+    private Button saveAutomationSettingsButton;
+    @FXML
+    private Label automationValidationLabel;
+
     // History tab controls
     @FXML
     private StackPane undoBatchWrapper;
@@ -222,7 +298,17 @@ public class MainController {
     private final DuplicateFinder duplicateFinder;
     private final DuplicateRemover duplicateRemover;
     private final RuleRepository ruleRepository;
+    private final SettingsRepository settingsRepository;
+    private final AutomationPipeline automationPipeline;
+    private final FolderWatcherService folderWatcherService;
+    private final DailySchedulerService dailySchedulerService;
+    private final AutostartService autostartService;
     private final RuleValidator ruleValidator = new RuleValidator();
+    private final SettingsValidator settingsValidator = new SettingsValidator();
+
+    private SystemTrayManager systemTrayManager;
+    private Runnable showWindowCallback;
+    private volatile AppSettings currentSettings = AppSettings.defaults();
 
     private Path selectedFolder;
     private Path selectedDedupeFolder;
@@ -232,6 +318,8 @@ public class MainController {
 
     private final ObservableList<PlannedOperation> plannedOperations = FXCollections.observableArrayList();
     private final ObservableList<Rule> currentRules = FXCollections.observableArrayList();
+    private final ObservableList<WatchedFolderConfig> watchedFolders = FXCollections.observableArrayList();
+    private final ObservableList<String> activityItems = FXCollections.observableArrayList();
     private final ObservableList<BatchRecord> batches = FXCollections.observableArrayList();
     private final ObservableList<OperationRecord> batchOperations = FXCollections.observableArrayList();
 
@@ -245,7 +333,12 @@ public class MainController {
                 null,
                 new DuplicateFinder(),
                 null,
-                null
+                null,
+                null,
+                null,
+                null,
+                null,
+                new WindowsRegistryAutostartService()
         );
     }
 
@@ -273,6 +366,40 @@ public class MainController {
             DuplicateRemover duplicateRemover,
             RuleRepository ruleRepository
     ) {
+        this(
+                scanner,
+                ruleEngine,
+                executor,
+                batchRepository,
+                operationRepository,
+                undoManager,
+                duplicateFinder,
+                duplicateRemover,
+                ruleRepository,
+                null,
+                null,
+                null,
+                null,
+                new WindowsRegistryAutostartService()
+        );
+    }
+
+    public MainController(
+            FolderScanner scanner,
+            RuleEngine ruleEngine,
+            FileExecutor executor,
+            BatchRepository batchRepository,
+            OperationRepository operationRepository,
+            UndoManager undoManager,
+            DuplicateFinder duplicateFinder,
+            DuplicateRemover duplicateRemover,
+            RuleRepository ruleRepository,
+            SettingsRepository settingsRepository,
+            AutomationPipeline automationPipeline,
+            FolderWatcherService folderWatcherService,
+            DailySchedulerService dailySchedulerService,
+            AutostartService autostartService
+    ) {
         this.scanner = scanner;
         this.ruleEngine = ruleEngine;
         this.executor = executor;
@@ -282,6 +409,27 @@ public class MainController {
         this.duplicateFinder = duplicateFinder;
         this.duplicateRemover = duplicateRemover;
         this.ruleRepository = ruleRepository;
+        this.settingsRepository = settingsRepository;
+        this.automationPipeline = automationPipeline;
+        this.folderWatcherService = folderWatcherService;
+        this.dailySchedulerService = dailySchedulerService;
+        this.autostartService = autostartService != null ? autostartService : new WindowsRegistryAutostartService();
+    }
+
+    public void setSystemTrayManager(SystemTrayManager systemTrayManager) {
+        this.systemTrayManager = systemTrayManager;
+    }
+
+    public void setShowWindowCallback(Runnable showWindowCallback) {
+        this.showWindowCallback = showWindowCallback;
+    }
+
+    public List<Rule> getCurrentRulesSnapshot() {
+        return List.copyOf(currentRules);
+    }
+
+    public AppSettings getCurrentSettings() {
+        return currentSettings;
     }
 
     @FXML
@@ -289,6 +437,7 @@ public class MainController {
         initOrganizeTab();
         initDuplicatesTab();
         initRulesTab();
+        initAutomationTab();
         initHistoryTab();
     }
 
@@ -706,10 +855,381 @@ public class MainController {
         }
     }
 
+    private void initAutomationTab() {
+        watchedPathColumn.setCellValueFactory(cell ->
+                new SimpleStringProperty(cell.getValue().path().toString()));
+
+        watchedModeColumn.setCellValueFactory(cell -> new SimpleObjectProperty<>(cell.getValue()));
+        watchedModeColumn.setCellFactory(col -> new TableCell<>() {
+            private final ComboBox<WatchMode> modeCombo = new ComboBox<>(
+                    FXCollections.observableArrayList(WatchMode.OFF, WatchMode.ASK, WatchMode.AUTO)
+            );
+            private boolean updatingGraphic = false;
+
+            {
+                modeCombo.setPrefWidth(100.0);
+                modeCombo.setOnAction(e -> {
+                    if (updatingGraphic) {
+                        return;
+                    }
+                    WatchedFolderConfig current = getItem();
+                    if (current == null) {
+                        return;
+                    }
+                    WatchMode chosenMode = modeCombo.getValue();
+                    if (chosenMode == null || chosenMode == current.mode()) {
+                        return;
+                    }
+                    if (chosenMode == WatchMode.AUTO && current.mode() != WatchMode.AUTO) {
+                        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+                        confirm.setTitle("Confirm Auto Mode");
+                        confirm.setHeaderText("Switch '" + current.path().getFileName() + "' to AUTO mode?");
+                        confirm.setContentText("Files in this folder will be moved automatically using your saved rules.\n"
+                                + "Every batch is recorded and can be undone from the History tab.");
+                        Optional<ButtonType> result = confirm.showAndWait();
+                        if (result.isEmpty() || result.get() != ButtonType.OK) {
+                            updatingGraphic = true;
+                            modeCombo.setValue(current.mode());
+                            updatingGraphic = false;
+                            return;
+                        }
+                    }
+
+                    int idx = getIndex();
+                    if (idx >= 0 && idx < watchedFolders.size()) {
+                        WatchedFolderConfig updatedEntry = new WatchedFolderConfig(
+                                current.path(),
+                                chosenMode,
+                                chosenMode != WatchMode.OFF
+                        );
+                        List<WatchedFolderConfig> updatedList = new ArrayList<>(watchedFolders);
+                        updatedList.set(idx, updatedEntry);
+                        applyAndSaveWatchedFolders(updatedList, idx);
+                    }
+                });
+            }
+
+            @Override
+            protected void updateItem(WatchedFolderConfig item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setGraphic(null);
+                } else {
+                    updatingGraphic = true;
+                    modeCombo.setValue(item.mode());
+                    updatingGraphic = false;
+                    setGraphic(modeCombo);
+                }
+            }
+        });
+
+        watchedStatusColumn.setCellValueFactory(cell -> {
+            WatchedFolderConfig cfg = cell.getValue();
+            if (cfg == null) {
+                return new SimpleStringProperty("");
+            }
+            if (folderWatcherService != null) {
+                return new SimpleStringProperty(folderWatcherService.statusFor(cfg.path()).displayName());
+            }
+            if (!cfg.enabled() || cfg.mode() == WatchMode.OFF) {
+                return new SimpleStringProperty(WatchedFolderStatus.OFF.displayName());
+            }
+            if (automationPipeline != null && automationPipeline.isPaused()) {
+                return new SimpleStringProperty(WatchedFolderStatus.PAUSED.displayName());
+            }
+            return new SimpleStringProperty(WatchedFolderStatus.WATCHING.displayName());
+        });
+
+        watchedFoldersTable.setItems(watchedFolders);
+        watchedFoldersTable.getSelectionModel().selectedIndexProperty().addListener((obs, o, n) ->
+                removeWatchedFolderButton.setDisable(n == null || n.intValue() < 0));
+
+        activityListView.setItems(activityItems);
+
+        if (!autostartService.isAvailable()) {
+            startWithWindowsCheckBox.setDisable(true);
+            Tooltip tip = new Tooltip(AUTOSTART_UNAVAILABLE_TOOLTIP);
+            startWithWindowsCheckBox.setTooltip(tip);
+            Tooltip.install(startWithWindowsWrapper, tip);
+        }
+
+        if (automationPipeline != null) {
+            automationPipeline.addListener(new AutomationListener() {
+                @Override
+                public void onActivityAdded(ActivityLogEntry entry) {
+                    Platform.runLater(() -> refreshActivityList());
+                }
+
+                @Override
+                public void onAutoBatchCompleted(String batchKind, Path folder, int movedCount, Long batchId) {
+                    Platform.runLater(() -> {
+                        refreshHistory();
+                        if (systemTrayManager != null) {
+                            systemTrayManager.notifyBatchOrganized(movedCount);
+                        }
+                    });
+                }
+
+                @Override
+                public void onFilesReadyForReview(Path folder, int readyCount, boolean triggeredByGuard, int guardThreshold) {
+                    Platform.runLater(() -> {
+                        if (systemTrayManager != null) {
+                            systemTrayManager.notifyFilesReadyForReview(folder, readyCount, triggeredByGuard, guardThreshold);
+                        }
+                    });
+                }
+
+                @Override
+                public void onStatusChanged() {
+                    Platform.runLater(() -> updateAutomationStatusUi());
+                }
+            });
+        }
+
+        loadInitialSettings();
+    }
+
+    private void loadInitialSettings() {
+        if (settingsRepository == null) {
+            applySettingsToUiAndServices(AppSettings.defaults());
+            return;
+        }
+        try {
+            SettingsLoadResult loadResult = settingsRepository.load();
+            applySettingsToUiAndServices(loadResult.settings());
+            if (loadResult.recoveredFromBackup()) {
+                Platform.runLater(() -> {
+                    Alert warn = new Alert(Alert.AlertType.WARNING);
+                    warn.setTitle("Settings Config Recovered");
+                    warn.setHeaderText("Restored Default Settings");
+                    warn.setContentText(loadResult.warningMessage());
+                    warn.showAndWait();
+                });
+            }
+        } catch (Exception e) {
+            applySettingsToUiAndServices(AppSettings.defaults());
+        }
+    }
+
+    private void applySettingsToUiAndServices(AppSettings settings) {
+        this.currentSettings = settings;
+        watchedFolders.setAll(settings.watchedFolders());
+        settleSecondsField.setText(String.valueOf(settings.settleSeconds()));
+        massMoveGuardField.setText(String.valueOf(settings.massMoveGuardThreshold()));
+        showNotificationsCheckBox.setSelected(settings.showNotifications());
+        minimizeToTrayCheckBox.setSelected(settings.minimizeToTray());
+        startWithWindowsCheckBox.setSelected(settings.startWithWindows() && autostartService.isAvailable());
+        scheduleEnabledCheckBox.setSelected(settings.schedule().enabled());
+        scheduleTimeField.setText(settings.schedule().timeOfDay());
+        automationValidationLabel.setText("");
+
+        if (automationPipeline != null) {
+            automationPipeline.setMassMoveGuardThreshold(settings.massMoveGuardThreshold());
+        }
+        if (folderWatcherService != null) {
+            folderWatcherService.updateConfiguration(
+                    settings.watchedFolders(),
+                    Duration.ofSeconds(settings.settleSeconds())
+            );
+        }
+        if (dailySchedulerService != null) {
+            dailySchedulerService.updateSettings(settings);
+        }
+        refreshActivityList();
+        updateAutomationStatusUi();
+    }
+
+    @FXML
+    private void onTogglePauseWatching() {
+        if (automationPipeline == null) {
+            return;
+        }
+        boolean nextPaused = !automationPipeline.isPaused();
+        automationPipeline.setPaused(nextPaused);
+        if (systemTrayManager != null) {
+            systemTrayManager.updatePausedState(nextPaused);
+        }
+        updateAutomationStatusUi();
+    }
+
+    @FXML
+    private void onAddWatchedFolder() {
+        Path chosen = chooseDirectory(addWatchedFolderButton);
+        if (chosen != null) {
+            addCandidateWatchedFolder(chosen);
+        }
+    }
+
+    @FXML
+    private void onAddDownloadsFolder() {
+        Path downloads = Path.of(System.getProperty("user.home", "."), "Downloads").toAbsolutePath().normalize();
+        addCandidateWatchedFolder(downloads);
+    }
+
+    private void addCandidateWatchedFolder(Path folder) {
+        List<String> errors = settingsValidator.validateNewWatchedFolder(folder, watchedFolders);
+        if (!errors.isEmpty()) {
+            automationValidationLabel.setText(String.join("; ", errors));
+            return;
+        }
+        List<WatchedFolderConfig> updated = new ArrayList<>(watchedFolders);
+        updated.add(WatchedFolderConfig.newDefault(folder.toAbsolutePath().normalize()));
+        applyAndSaveWatchedFolders(updated, updated.size() - 1);
+    }
+
+    @FXML
+    private void onRemoveWatchedFolder() {
+        int idx = watchedFoldersTable.getSelectionModel().getSelectedIndex();
+        if (idx < 0 || idx >= watchedFolders.size()) {
+            return;
+        }
+        List<WatchedFolderConfig> updated = new ArrayList<>(watchedFolders);
+        updated.remove(idx);
+        applyAndSaveWatchedFolders(updated, Math.min(idx, updated.size() - 1));
+    }
+
+    private void applyAndSaveWatchedFolders(List<WatchedFolderConfig> updatedFolders, int selectIndex) {
+        AppSettings candidate = new AppSettings(
+                updatedFolders,
+                currentSettings.settleSeconds(),
+                currentSettings.massMoveGuardThreshold(),
+                currentSettings.showNotifications(),
+                currentSettings.minimizeToTray(),
+                currentSettings.startWithWindows(),
+                currentSettings.schedule()
+        );
+        validateAndPersistSettingsAsync(candidate, selectIndex);
+    }
+
+    @FXML
+    private void onSaveAutomationSettings() {
+        int settleSecs = parseIntOrInvalid(settleSecondsField.getText());
+        int guardThreshold = parseIntOrInvalid(massMoveGuardField.getText());
+        String scheduleTime = scheduleTimeField.getText() != null ? scheduleTimeField.getText().trim() : "";
+
+        AppSettings candidate = new AppSettings(
+                List.copyOf(watchedFolders),
+                settleSecs,
+                guardThreshold,
+                showNotificationsCheckBox.isSelected(),
+                minimizeToTrayCheckBox.isSelected(),
+                startWithWindowsCheckBox.isSelected() && autostartService.isAvailable(),
+                new ScheduleConfig(scheduleEnabledCheckBox.isSelected(), scheduleTime)
+        );
+        validateAndPersistSettingsAsync(candidate, watchedFoldersTable.getSelectionModel().getSelectedIndex());
+    }
+
+    private void validateAndPersistSettingsAsync(AppSettings candidate, int selectFolderIndex) {
+        List<String> errors = settingsValidator.validate(candidate);
+        if (!errors.isEmpty()) {
+            automationValidationLabel.setText(String.join("; ", errors));
+            return;
+        }
+
+        automationValidationLabel.setText("");
+        applySettingsToUiAndServices(candidate);
+        if (selectFolderIndex >= 0 && selectFolderIndex < watchedFolders.size()) {
+            watchedFoldersTable.getSelectionModel().select(selectFolderIndex);
+        }
+
+        Thread saveWorker = new Thread(() -> {
+            try {
+                if (settingsRepository != null) {
+                    settingsRepository.save(candidate);
+                }
+                if (autostartService.isAvailable()) {
+                    autostartService.setEnabled(candidate.startWithWindows());
+                }
+                Platform.runLater(() -> statusLabel.setText("Automation settings saved."));
+            } catch (Exception e) {
+                Platform.runLater(() -> automationValidationLabel.setText("Save failed: " + e.getMessage()));
+            }
+        }, "tidyflow-settings-save-thread");
+        saveWorker.setDaemon(true);
+        saveWorker.start();
+    }
+
+    private void updateAutomationStatusUi() {
+        boolean paused = automationPipeline != null && automationPipeline.isPaused();
+        pauseResumeButton.setText(paused ? "Resume Watching" : "Pause Watching");
+
+        int watchingCount = 0;
+        if (folderWatcherService != null) {
+            watchingCount = folderWatcherService.activeWatchingCount();
+        } else {
+            watchingCount = (int) watchedFolders.stream()
+                    .filter(f -> f.enabled() && f.mode() != WatchMode.OFF)
+                    .count();
+        }
+
+        if (paused) {
+            automationStatusLabel.setText("Paused");
+        } else if (watchingCount == 1) {
+            automationStatusLabel.setText("Watching 1 folder");
+        } else {
+            automationStatusLabel.setText("Watching " + watchingCount + " folders");
+        }
+        watchedFoldersTable.refresh();
+    }
+
+    private void refreshActivityList() {
+        if (automationPipeline == null) {
+            return;
+        }
+        List<String> formatted = automationPipeline.recentActivities().stream()
+                .map(entry -> ACTIVITY_TIME_FORMATTER.format(entry.timestamp()) + " " + entry.message())
+                .toList();
+        activityItems.setAll(formatted);
+    }
+
+    public void openOrganizeTab() {
+        if (showWindowCallback != null) {
+            showWindowCallback.run();
+        }
+        if (mainTabPane != null && organizeTab != null) {
+            mainTabPane.getSelectionModel().select(organizeTab);
+        }
+    }
+
+    public void openOrganizeTabForFolder(Path folder) {
+        openOrganizeTab();
+        if (folder != null && Files.isDirectory(folder)) {
+            selectedFolder = folder;
+            folderPathLabel.setText(selectedFolder.toString());
+            scanButton.setDisable(false);
+            onScan();
+        }
+    }
+
+    public void openHistoryTab() {
+        if (showWindowCallback != null) {
+            showWindowCallback.run();
+        }
+        if (mainTabPane != null && historyTab != null) {
+            mainTabPane.getSelectionModel().select(historyTab);
+        }
+        refreshHistory();
+    }
+
+    public void togglePauseFromTray() {
+        onTogglePauseWatching();
+    }
+
+    private static int parseIntOrInvalid(String text) {
+        if (text == null || text.isBlank()) {
+            return -1;
+        }
+        try {
+            return Integer.parseInt(text.trim());
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
     private void initHistoryTab() {
         batchDateColumn.setCellValueFactory(cell -> {
             BatchRecord b = cell.getValue();
-            String prefix = "DEDUPE".equalsIgnoreCase(b.kind()) ? "[Dedupe] " : "[Organize] ";
+            String prefix = formatBatchKindPrefix(b.kind());
             return new SimpleStringProperty(prefix + DATE_FORMATTER.format(b.startedAt()));
         });
         batchFilesColumn.setCellValueFactory(cell ->
@@ -1377,6 +1897,18 @@ public class MainController {
         alert.setHeaderText(null);
         alert.setContentText(message);
         alert.showAndWait();
+    }
+
+    public static String formatBatchKindPrefix(String kind) {
+        if (kind == null) {
+            return "[Organize] ";
+        }
+        return switch (kind.toUpperCase(java.util.Locale.ROOT)) {
+            case "AUTO" -> "[Auto] ";
+            case "SCHEDULED" -> "[Scheduled] ";
+            case "DEDUPE" -> "[Dedupe] ";
+            default -> "[Organize] ";
+        };
     }
 
     @FunctionalInterface
