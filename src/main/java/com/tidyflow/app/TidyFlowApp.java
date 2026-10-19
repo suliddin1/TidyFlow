@@ -15,11 +15,14 @@ import com.tidyflow.data.BatchRepository;
 import com.tidyflow.data.DatabaseManager;
 import com.tidyflow.data.FileIndexRepository;
 import com.tidyflow.data.OperationRepository;
+import com.tidyflow.data.StatsRepository;
 import com.tidyflow.data.config.AppSettings;
 import com.tidyflow.data.config.RuleRepository;
 import com.tidyflow.data.config.SettingsRepository;
+import com.tidyflow.data.config.ThemeMode;
 import com.tidyflow.ui.MainController;
 import com.tidyflow.ui.SystemTrayManager;
+import com.tidyflow.ui.ThemeManager;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
@@ -28,13 +31,13 @@ import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.stage.Stage;
 
-import java.net.URL;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * JavaFX Application entry point that enforces a single running instance, initializes SQLite migrations,
- * starts background folder watching and scheduling, manages the system tray lifecycle, and wires services into the UI.
+ * starts background folder watching and scheduling, manages the system tray lifecycle, applies themes and icons,
+ * and wires services into the UI.
  */
 public class TidyFlowApp extends Application {
 
@@ -47,10 +50,12 @@ public class TidyFlowApp extends Application {
     public void start(Stage primaryStage) throws Exception {
         instanceLock = new SingleInstanceLock();
         if (!instanceLock.tryAcquire()) {
+            ThemeManager.applyTheme(ThemeMode.SYSTEM);
             Alert alert = new Alert(Alert.AlertType.INFORMATION);
             alert.setTitle("TidyFlow");
             alert.setHeaderText(null);
             alert.setContentText("TidyFlow is already running (check the system tray)");
+            ThemeManager.styleDialog(alert);
             alert.showAndWait();
             Platform.exit();
             return;
@@ -62,6 +67,7 @@ public class TidyFlowApp extends Application {
         BatchRepository batchRepository = new BatchRepository(dbManager);
         OperationRepository operationRepository = new OperationRepository(dbManager);
         FileIndexRepository fileIndexRepository = new FileIndexRepository(dbManager);
+        StatsRepository statsRepository = new StatsRepository(dbManager);
         RuleRepository ruleRepository = new RuleRepository();
         SettingsRepository settingsRepository = new SettingsRepository();
         AutostartService autostartService = new WindowsRegistryAutostartService();
@@ -111,7 +117,8 @@ public class TidyFlowApp extends Application {
                         automationPipeline,
                         folderWatcherService,
                         dailySchedulerService,
-                        autostartService
+                        autostartService,
+                        statsRepository
                 );
                 controllerRef.set(controller);
                 return controller;
@@ -165,12 +172,13 @@ public class TidyFlowApp extends Application {
         });
 
         Scene scene = new Scene(root);
-        URL stylesheet = getClass().getResource("/com/tidyflow/ui/styles.css");
-        if (stylesheet != null) {
-            scene.getStylesheets().add(stylesheet.toExternalForm());
-        }
+        ThemeManager.applyTheme(controller.getCurrentSettings().theme());
+        ThemeManager.applyToScene(scene);
+        ThemeManager.applyWindowIcons(primaryStage);
 
         primaryStage.setTitle("TidyFlow");
+        primaryStage.setMinWidth(960);
+        primaryStage.setMinHeight(640);
         primaryStage.setScene(scene);
         primaryStage.show();
     }

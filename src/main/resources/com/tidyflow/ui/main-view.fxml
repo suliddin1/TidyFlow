@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <?import javafx.geometry.Insets?>
+<?import javafx.scene.chart.BarChart?>
+<?import javafx.scene.chart.CategoryAxis?>
+<?import javafx.scene.chart.NumberAxis?>
 <?import javafx.scene.control.Button?>
 <?import javafx.scene.control.CheckBox?>
 <?import javafx.scene.control.ComboBox?>
@@ -13,10 +16,16 @@
 <?import javafx.scene.control.TableColumn?>
 <?import javafx.scene.control.TableView?>
 <?import javafx.scene.control.TextField?>
+<?import javafx.scene.control.ToggleButton?>
+<?import javafx.scene.control.ToggleGroup?>
+<?import javafx.scene.control.Tooltip?>
 <?import javafx.scene.control.TreeTableColumn?>
 <?import javafx.scene.control.TreeTableView?>
 <?import javafx.scene.layout.BorderPane?>
+<?import javafx.scene.layout.ColumnConstraints?>
+<?import javafx.scene.layout.GridPane?>
 <?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Priority?>
 <?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.layout.VBox?>
@@ -24,29 +33,162 @@
 <BorderPane xmlns="http://javafx.com/javafx/21"
             xmlns:fx="http://javafx.com/fxml/1"
             fx:controller="com.tidyflow.ui.MainController"
-            prefWidth="980.0" prefHeight="640.0">
+            prefWidth="1040.0" prefHeight="680.0"
+            minWidth="960.0" minHeight="640.0">
+
+    <fx:define>
+        <ToggleGroup fx:id="dashboardRangeGroup"/>
+    </fx:define>
 
     <center>
         <TabPane fx:id="mainTabPane" tabClosingPolicy="UNAVAILABLE">
-            <!-- Tab 1: Organize -->
+            <!-- Tab 1: Dashboard (default at startup) -->
+            <Tab fx:id="dashboardTab" text="Dashboard" onSelectionChanged="#onDashboardTabSelected">
+                <BorderPane>
+                    <top>
+                        <HBox alignment="CENTER_LEFT" styleClass="toolbar-bar" spacing="8.0">
+                            <Label text="Overview" styleClass="page-title"/>
+                            <Region HBox.hgrow="ALWAYS"/>
+                            <Label text="Time range:" styleClass="muted-text"/>
+                            <ToggleButton fx:id="range7DaysButton" text="Last 7 days"
+                                          toggleGroup="$dashboardRangeGroup" onAction="#onDashboardRangeChanged"/>
+                            <ToggleButton fx:id="range30DaysButton" text="Last 30 days" selected="true"
+                                          toggleGroup="$dashboardRangeGroup" onAction="#onDashboardRangeChanged"/>
+                            <ToggleButton fx:id="range90DaysButton" text="Last 90 days"
+                                          toggleGroup="$dashboardRangeGroup" onAction="#onDashboardRangeChanged"/>
+                            <ToggleButton fx:id="rangeAllTimeButton" text="All time"
+                                          toggleGroup="$dashboardRangeGroup" onAction="#onDashboardRangeChanged"/>
+                        </HBox>
+                    </top>
+                    <center>
+                        <VBox spacing="16.0">
+                            <padding>
+                                <Insets top="16.0" right="16.0" bottom="16.0" left="16.0"/>
+                            </padding>
+
+                            <!-- 6 Summary Cards on responsive GridPane -->
+                            <GridPane hgap="12.0" vgap="12.0">
+                                <columnConstraints>
+                                    <ColumnConstraints percentWidth="16.66" hgrow="ALWAYS"/>
+                                    <ColumnConstraints percentWidth="16.66" hgrow="ALWAYS"/>
+                                    <ColumnConstraints percentWidth="16.66" hgrow="ALWAYS"/>
+                                    <ColumnConstraints percentWidth="16.66" hgrow="ALWAYS"/>
+                                    <ColumnConstraints percentWidth="16.66" hgrow="ALWAYS"/>
+                                    <ColumnConstraints percentWidth="16.70" hgrow="ALWAYS"/>
+                                </columnConstraints>
+
+                                <VBox styleClass="card" GridPane.columnIndex="0">
+                                    <Label text="Files organized" styleClass="card-label"/>
+                                    <Label fx:id="statFilesOrganizedLabel" text="0" styleClass="card-value" wrapText="true"/>
+                                </VBox>
+                                <VBox styleClass="card" GridPane.columnIndex="1">
+                                    <Label text="Space organized" styleClass="card-label"/>
+                                    <Label fx:id="statSpaceOrganizedLabel" text="0 B" styleClass="card-value" wrapText="true"/>
+                                </VBox>
+                                <VBox styleClass="card" GridPane.columnIndex="2">
+                                    <Label text="Duplicates removed" styleClass="card-label"/>
+                                    <Label fx:id="statDuplicatesRemovedLabel" text="0" styleClass="card-value" wrapText="true"/>
+                                </VBox>
+                                <VBox styleClass="card" GridPane.columnIndex="3">
+                                    <Label text="Space freed" styleClass="card-label"/>
+                                    <Label fx:id="statSpaceFreedLabel" text="0 B" styleClass="card-value" wrapText="true"/>
+                                </VBox>
+                                <VBox styleClass="card" GridPane.columnIndex="4">
+                                    <Label text="Batches" styleClass="card-label"/>
+                                    <Label fx:id="statBatchesLabel" text="0" styleClass="card-value" wrapText="true"/>
+                                </VBox>
+                                <VBox styleClass="card" GridPane.columnIndex="5">
+                                    <Label text="Last activity" styleClass="card-label"/>
+                                    <Label fx:id="statLastActivityLabel" text="No activity yet" styleClass="section-title" wrapText="true"/>
+                                </VBox>
+                            </GridPane>
+
+                            <StackPane VBox.vgrow="ALWAYS">
+                                <!-- Friendly Empty State -->
+                                <VBox fx:id="dashboardEmptyStateBox" alignment="CENTER" spacing="12.0" styleClass="card" visible="false" managed="false">
+                                    <Label text="No file organization history in this time range yet" styleClass="section-title"/>
+                                    <Label text="Scan a folder to preview and organize files now, or set up automatic background watching."
+                                           styleClass="muted-text" wrapText="true"/>
+                                    <HBox alignment="CENTER" spacing="12.0">
+                                        <Button text="Scan a folder" styleClass="button-primary" onAction="#onDashboardScanFolder"/>
+                                        <Button text="Set up automation" styleClass="button-secondary" onAction="#onDashboardSetupAutomation"/>
+                                    </HBox>
+                                </VBox>
+
+                                <!-- Charts + Recent Activity Content -->
+                                <GridPane fx:id="dashboardContentGrid" hgap="16.0" vgap="16.0">
+                                    <columnConstraints>
+                                        <ColumnConstraints percentWidth="36.0" hgrow="ALWAYS"/>
+                                        <ColumnConstraints percentWidth="32.0" hgrow="ALWAYS"/>
+                                        <ColumnConstraints percentWidth="32.0" hgrow="ALWAYS"/>
+                                    </columnConstraints>
+
+                                    <VBox styleClass="card" GridPane.columnIndex="0" GridPane.vgrow="ALWAYS">
+                                        <Label fx:id="filesPerPeriodChartTitle" text="Files organized per day" styleClass="section-title"/>
+                                        <BarChart fx:id="filesPerPeriodChart" legendVisible="false" animated="false" VBox.vgrow="ALWAYS">
+                                            <xAxis>
+                                                <CategoryAxis fx:id="periodCategoryAxis"/>
+                                            </xAxis>
+                                            <yAxis>
+                                                <NumberAxis fx:id="periodCountAxis" forceZeroInRange="true"/>
+                                            </yAxis>
+                                        </BarChart>
+                                    </VBox>
+
+                                    <VBox styleClass="card" GridPane.columnIndex="1" GridPane.vgrow="ALWAYS">
+                                        <Label text="Files by rule (top 8 + Other)" styleClass="section-title"/>
+                                        <BarChart fx:id="filesByRuleChart" legendVisible="false" animated="false" VBox.vgrow="ALWAYS">
+                                            <xAxis>
+                                                <NumberAxis fx:id="ruleCountAxis" forceZeroInRange="true"/>
+                                            </xAxis>
+                                            <yAxis>
+                                                <CategoryAxis fx:id="ruleNameAxis"/>
+                                            </yAxis>
+                                        </BarChart>
+                                    </VBox>
+
+                                    <VBox styleClass="card" spacing="8.0" GridPane.columnIndex="2" GridPane.vgrow="ALWAYS">
+                                        <HBox alignment="CENTER_LEFT" spacing="8.0">
+                                            <Label text="Recent activity" styleClass="section-title"/>
+                                            <Region HBox.hgrow="ALWAYS"/>
+                                            <Button text="Open History" styleClass="button-secondary" onAction="#onOpenHistoryFromDashboard">
+                                                <tooltip>
+                                                    <Tooltip text="Open the History tab to view details or undo batches"/>
+                                                </tooltip>
+                                            </Button>
+                                        </HBox>
+                                        <ListView fx:id="dashboardRecentBatchesListView" VBox.vgrow="ALWAYS">
+                                            <placeholder>
+                                                <Label text="No batches recorded in this range." styleClass="muted-text"/>
+                                            </placeholder>
+                                        </ListView>
+                                    </VBox>
+                                </GridPane>
+                            </StackPane>
+                        </VBox>
+                    </center>
+                </BorderPane>
+            </Tab>
+
+            <!-- Tab 2: Organize -->
             <Tab fx:id="organizeTab" text="Organize">
                 <BorderPane>
                     <top>
                         <HBox alignment="CENTER_LEFT" styleClass="toolbar-bar" spacing="10.0">
-                            <Button fx:id="chooseFolderButton" text="Choose folder" onAction="#onChooseFolder"/>
+                            <Button fx:id="chooseFolderButton" text="Choose folder" styleClass="button-secondary" onAction="#onChooseFolder"/>
                             <Label fx:id="folderPathLabel" text="No folder selected" HBox.hgrow="ALWAYS"/>
                             <Region HBox.hgrow="ALWAYS"/>
-                            <Button fx:id="scanButton" text="Scan" onAction="#onScan" disable="true"/>
-                            <Button fx:id="applyButton" text="Apply" onAction="#onApply" disable="true"/>
+                            <Button fx:id="scanButton" text="Scan" styleClass="button-secondary" onAction="#onScan" disable="true"/>
+                            <Button fx:id="applyButton" text="Apply" styleClass="button-primary" onAction="#onApply" disable="true"/>
                         </HBox>
                     </top>
                     <center>
                         <TableView fx:id="previewTable">
                             <BorderPane.margin>
-                                <Insets left="12.0" right="12.0" bottom="8.0"/>
+                                <Insets top="12.0" left="16.0" right="16.0" bottom="12.0"/>
                             </BorderPane.margin>
                             <placeholder>
-                                <Label text="Select a folder and click Scan to preview planned file moves."/>
+                                <Label text="Select a folder and click Scan to preview planned file moves." styleClass="muted-text"/>
                             </placeholder>
                             <columns>
                                 <TableColumn fx:id="fileNameColumn" text="File Name" prefWidth="240.0"/>
@@ -58,17 +200,17 @@
                 </BorderPane>
             </Tab>
 
-            <!-- Tab 2: Duplicates -->
+            <!-- Tab 3: Duplicates -->
             <Tab fx:id="duplicatesTab" text="Duplicates">
                 <BorderPane>
                     <top>
                         <VBox spacing="8.0" styleClass="toolbar-bar">
                             <HBox alignment="CENTER_LEFT" spacing="10.0">
-                                <Button fx:id="dedupeChooseFolderButton" text="Choose folder" onAction="#onChooseDedupeFolder"/>
+                                <Button fx:id="dedupeChooseFolderButton" text="Choose folder" styleClass="button-secondary" onAction="#onChooseDedupeFolder"/>
                                 <Label fx:id="dedupeFolderPathLabel" text="No folder selected" HBox.hgrow="ALWAYS"/>
                                 <Region HBox.hgrow="ALWAYS"/>
-                                <Button fx:id="findDuplicatesButton" text="Find duplicates" onAction="#onFindDuplicates" disable="true"/>
-                                <Button fx:id="cancelDedupeButton" text="Cancel" onAction="#onCancelDedupe" disable="true"/>
+                                <Button fx:id="findDuplicatesButton" text="Find duplicates" styleClass="button-primary" onAction="#onFindDuplicates" disable="true"/>
+                                <Button fx:id="cancelDedupeButton" text="Cancel" styleClass="button-secondary" onAction="#onCancelDedupe" disable="true"/>
                             </HBox>
                             <HBox alignment="CENTER_LEFT" spacing="12.0">
                                 <CheckBox fx:id="dedupeRecursiveCheckBox" text="Include subfolders" selected="true"/>
@@ -76,20 +218,20 @@
                                 <TextField fx:id="dedupeMinSizeField" text="0" prefWidth="65.0"/>
                                 <ComboBox fx:id="dedupeSizeUnitCombo" prefWidth="75.0"/>
                                 <Label text="Keeper strategy:"/>
-                                <ComboBox fx:id="dedupeStrategyCombo" prefWidth="155.0"/>
+                                <ComboBox fx:id="dedupeStrategyCombo" prefWidth="165.0"/>
                                 <Region HBox.hgrow="ALWAYS"/>
                                 <ProgressBar fx:id="dedupeProgressBar" prefWidth="140.0" progress="0.0" visible="false"/>
-                                <Label fx:id="dedupeProgressLabel" text=""/>
+                                <Label fx:id="dedupeProgressLabel" text="" styleClass="muted-text"/>
                             </HBox>
                         </VBox>
                     </top>
                     <center>
                         <TreeTableView fx:id="dedupeTreeTable" showRoot="false">
                             <BorderPane.margin>
-                                <Insets left="12.0" right="12.0" bottom="8.0"/>
+                                <Insets top="12.0" left="16.0" right="16.0" bottom="12.0"/>
                             </BorderPane.margin>
                             <placeholder>
-                                <Label text="Choose a folder and click 'Find duplicates' to scan for identical files."/>
+                                <Label text="Choose a folder and click 'Find duplicates' to scan for identical files." styleClass="muted-text"/>
                             </placeholder>
                             <columns>
                                 <TreeTableColumn fx:id="dedupeRemoveColumn" text="Remove" prefWidth="110.0"/>
@@ -105,34 +247,42 @@
                             <Label fx:id="dedupeSummaryLabel" text="0 groups | 0 files selected | 0 B to free"/>
                             <Region HBox.hgrow="ALWAYS"/>
                             <Button fx:id="removeDuplicatesButton" text="Move selected to Recycle Bin"
-                                    onAction="#onRemoveSelectedDuplicates" disable="true"/>
+                                    styleClass="button-danger" onAction="#onRemoveSelectedDuplicates" disable="true"/>
                         </HBox>
                     </bottom>
                 </BorderPane>
             </Tab>
 
-            <!-- Tab 3: Rules -->
+            <!-- Tab 4: Rules -->
             <Tab fx:id="rulesTab" text="Rules">
                 <BorderPane>
                     <top>
                         <HBox alignment="CENTER_LEFT" styleClass="toolbar-bar" spacing="8.0">
-                            <Button fx:id="addRuleButton" text="Add" onAction="#onAddRule"/>
-                            <Button fx:id="editRuleButton" text="Edit" onAction="#onEditRule" disable="true"/>
-                            <Button fx:id="duplicateRuleButton" text="Duplicate" onAction="#onDuplicateRule" disable="true"/>
-                            <Button fx:id="deleteRuleButton" text="Delete" onAction="#onDeleteRule" disable="true"/>
-                            <Button fx:id="moveRuleUpButton" text="Move up" onAction="#onMoveRuleUp" disable="true"/>
-                            <Button fx:id="moveRuleDownButton" text="Move down" onAction="#onMoveRuleDown" disable="true"/>
+                            <Button fx:id="addRuleButton" text="Add" styleClass="button-primary" onAction="#onAddRule"/>
+                            <Button fx:id="editRuleButton" text="Edit" styleClass="button-secondary" onAction="#onEditRule" disable="true"/>
+                            <Button fx:id="duplicateRuleButton" text="Duplicate" styleClass="button-secondary" onAction="#onDuplicateRule" disable="true"/>
+                            <Button fx:id="deleteRuleButton" text="Delete" styleClass="button-danger" onAction="#onDeleteRule" disable="true"/>
+                            <Button fx:id="moveRuleUpButton" text="Move up" styleClass="button-secondary" onAction="#onMoveRuleUp" disable="true">
+                                <tooltip>
+                                    <Tooltip text="Increase priority of the selected rule"/>
+                                </tooltip>
+                            </Button>
+                            <Button fx:id="moveRuleDownButton" text="Move down" styleClass="button-secondary" onAction="#onMoveRuleDown" disable="true">
+                                <tooltip>
+                                    <Tooltip text="Decrease priority of the selected rule"/>
+                                </tooltip>
+                            </Button>
                             <Region HBox.hgrow="ALWAYS"/>
-                            <Button fx:id="resetRulesButton" text="Reset to defaults" onAction="#onResetRulesToDefaults"/>
+                            <Button fx:id="resetRulesButton" text="Reset to defaults" styleClass="button-secondary" onAction="#onResetRulesToDefaults"/>
                         </HBox>
                     </top>
                     <center>
                         <TableView fx:id="rulesTable">
                             <BorderPane.margin>
-                                <Insets left="12.0" right="12.0" bottom="8.0"/>
+                                <Insets top="12.0" left="16.0" right="16.0" bottom="12.0"/>
                             </BorderPane.margin>
                             <placeholder>
-                                <Label text="No rules configured."/>
+                                <Label text="No rules configured. Click 'Add' or 'Reset to defaults' to get started." styleClass="muted-text"/>
                             </placeholder>
                             <columns>
                                 <TableColumn fx:id="ruleEnabledColumn" text="Enabled" prefWidth="75.0"/>
@@ -144,8 +294,8 @@
                         </TableView>
                     </center>
                     <bottom>
-                        <VBox spacing="6.0" styleClass="toolbar-bar">
-                            <Label text="Try it (dry-run preview against current rules):" style="-fx-font-weight: bold;"/>
+                        <VBox spacing="8.0" styleClass="toolbar-bar">
+                            <Label text="Try it (dry-run preview against current rules):" styleClass="section-title"/>
                             <HBox alignment="CENTER_LEFT" spacing="10.0">
                                 <Label text="File name:"/>
                                 <TextField fx:id="tryFileNameField" promptText="e.g. photo.jpg" prefWidth="170.0"/>
@@ -155,39 +305,37 @@
                                 <Label text="Age (days):"/>
                                 <TextField fx:id="tryAgeDaysField" text="0" prefWidth="55.0"/>
                                 <Label text="Result:"/>
-                                <Label fx:id="tryResultLabel" text="no rule matches" style="-fx-font-weight: bold;"/>
+                                <Label fx:id="tryResultLabel" text="Enter a sample file name above to preview which rule matches" styleClass="section-title"/>
                             </HBox>
                         </VBox>
                     </bottom>
                 </BorderPane>
             </Tab>
 
-            <!-- Tab 4: Automation -->
+            <!-- Tab 5: Automation -->
             <Tab fx:id="automationTab" text="Automation">
                 <BorderPane>
                     <top>
                         <VBox spacing="8.0" styleClass="toolbar-bar">
                             <HBox alignment="CENTER_LEFT" spacing="12.0">
                                 <Button fx:id="pauseResumeButton" text="Pause Watching"
-                                        onAction="#onTogglePauseWatching"
-                                        style="-fx-font-weight: bold; -fx-padding: 6 16 6 16;"/>
-                                <Label fx:id="automationStatusLabel" text="Watching 0 folders"
-                                       style="-fx-font-weight: bold;"/>
+                                        styleClass="button-primary" onAction="#onTogglePauseWatching"/>
+                                <Label fx:id="automationStatusLabel" text="Watching 0 folders" styleClass="section-title"/>
                                 <Region HBox.hgrow="ALWAYS"/>
-                                <Button fx:id="addWatchedFolderButton" text="Add folder (Browse)" onAction="#onAddWatchedFolder"/>
-                                <Button fx:id="addDownloadsFolderButton" text="Add my Downloads folder" onAction="#onAddDownloadsFolder"/>
-                                <Button fx:id="removeWatchedFolderButton" text="Remove" onAction="#onRemoveWatchedFolder" disable="true"/>
+                                <Button fx:id="addWatchedFolderButton" text="Add folder (Browse)" styleClass="button-secondary" onAction="#onAddWatchedFolder"/>
+                                <Button fx:id="addDownloadsFolderButton" text="Add my Downloads folder" styleClass="button-secondary" onAction="#onAddDownloadsFolder"/>
+                                <Button fx:id="removeWatchedFolderButton" text="Remove" styleClass="button-danger" onAction="#onRemoveWatchedFolder" disable="true"/>
                             </HBox>
                         </VBox>
                     </top>
                     <center>
                         <SplitPane dividerPositions="0.58">
                             <BorderPane.margin>
-                                <Insets left="12.0" right="12.0" bottom="8.0"/>
+                                <Insets top="12.0" left="16.0" right="16.0" bottom="12.0"/>
                             </BorderPane.margin>
                             <TableView fx:id="watchedFoldersTable">
                                 <placeholder>
-                                    <Label text="No watched folders yet. Click 'Add my Downloads folder' or 'Add folder (Browse)'."/>
+                                    <Label text="No watched folders yet. Click 'Add my Downloads folder' or 'Add folder (Browse)'." styleClass="muted-text"/>
                                 </placeholder>
                                 <columns>
                                     <TableColumn fx:id="watchedPathColumn" text="Folder Path" prefWidth="290.0"/>
@@ -196,14 +344,14 @@
                                 </columns>
                             </TableView>
 
-                            <VBox spacing="6.0">
+                            <VBox spacing="8.0">
                                 <padding>
-                                    <Insets top="6.0" right="6.0" bottom="6.0" left="6.0"/>
+                                    <Insets top="8.0" right="8.0" bottom="8.0" left="8.0"/>
                                 </padding>
-                                <Label text="Recent Activity (last 50 events)" style="-fx-font-weight: bold;"/>
+                                <Label text="Recent Activity (last 50 events)" styleClass="section-title"/>
                                 <ListView fx:id="activityListView" VBox.vgrow="ALWAYS">
                                     <placeholder>
-                                        <Label text="No background activity yet."/>
+                                        <Label text="No background activity yet. Events from watched folders and scheduled runs appear here." styleClass="muted-text"/>
                                     </placeholder>
                                 </ListView>
                             </VBox>
@@ -225,37 +373,45 @@
                             <HBox alignment="CENTER_LEFT" spacing="12.0">
                                 <CheckBox fx:id="scheduleEnabledCheckBox" text="Run daily schedule at (HH:mm):"/>
                                 <TextField fx:id="scheduleTimeField" text="09:00" prefWidth="75.0" promptText="HH:mm"/>
-                                <Button fx:id="saveAutomationSettingsButton" text="Save settings" onAction="#onSaveAutomationSettings"/>
-                                <Label fx:id="automationValidationLabel" text="" style="-fx-text-fill: #b91c1c; -fx-font-weight: bold;"/>
+                                <Button fx:id="saveAutomationSettingsButton" text="Save settings"
+                                        styleClass="button-primary" onAction="#onSaveAutomationSettings"/>
+                                <Label fx:id="automationValidationLabel" text="" styleClass="validation-error"/>
+                            </HBox>
+                            <HBox alignment="CENTER_LEFT" spacing="12.0">
+                                <Label text="Application:" styleClass="section-title"/>
+                                <Label text="Theme:"/>
+                                <ComboBox fx:id="themeCombo" prefWidth="120.0" onAction="#onThemeChanged"/>
+                                <Region HBox.hgrow="ALWAYS"/>
+                                <Label fx:id="appVersionLabel" text="TidyFlow" styleClass="muted-text"/>
                             </HBox>
                         </VBox>
                     </bottom>
                 </BorderPane>
             </Tab>
 
-            <!-- Tab 5: History -->
+            <!-- Tab 6: History -->
             <Tab fx:id="historyTab" text="History" onSelectionChanged="#onHistoryTabSelected">
                 <BorderPane>
                     <top>
                         <HBox alignment="CENTER_LEFT" styleClass="toolbar-bar" spacing="10.0">
                             <StackPane fx:id="undoBatchWrapper">
-                                <Button fx:id="undoBatchButton" text="Undo batch" onAction="#onUndoBatch" disable="true"/>
+                                <Button fx:id="undoBatchButton" text="Undo batch" styleClass="button-secondary" onAction="#onUndoBatch" disable="true"/>
                             </StackPane>
                             <StackPane fx:id="undoFileWrapper">
-                                <Button fx:id="undoFileButton" text="Undo selected file" onAction="#onUndoSelectedFile" disable="true"/>
+                                <Button fx:id="undoFileButton" text="Undo selected file" styleClass="button-secondary" onAction="#onUndoSelectedFile" disable="true"/>
                             </StackPane>
                             <Region HBox.hgrow="ALWAYS"/>
-                            <Button fx:id="refreshHistoryButton" text="Refresh" onAction="#onRefreshHistory"/>
+                            <Button fx:id="refreshHistoryButton" text="Refresh" styleClass="button-secondary" onAction="#onRefreshHistory"/>
                         </HBox>
                     </top>
                     <center>
                         <SplitPane dividerPositions="0.38">
                             <BorderPane.margin>
-                                <Insets left="12.0" right="12.0" bottom="8.0"/>
+                                <Insets top="12.0" left="16.0" right="16.0" bottom="12.0"/>
                             </BorderPane.margin>
                             <TableView fx:id="batchesTable">
                                 <placeholder>
-                                    <Label text="No recorded batches yet."/>
+                                    <Label text="No recorded batches yet. Organize files or remove duplicates to see history." styleClass="muted-text"/>
                                 </placeholder>
                                 <columns>
                                     <TableColumn fx:id="batchDateColumn" text="Date/Time &amp; Type" prefWidth="185.0"/>
@@ -266,7 +422,7 @@
 
                             <TableView fx:id="operationsTable">
                                 <placeholder>
-                                    <Label text="Select a batch to view its operations."/>
+                                    <Label text="Select a batch on the left to view its file operations." styleClass="muted-text"/>
                                 </placeholder>
                                 <columns>
                                     <TableColumn fx:id="opFileNameColumn" text="File Name" prefWidth="140.0"/>

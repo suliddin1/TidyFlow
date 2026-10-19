@@ -134,11 +134,12 @@ public final class RuleEditorDialog {
         targetRow.setAlignment(Pos.CENTER_LEFT);
         HBox.setHgrow(targetFolderField, Priority.ALWAYS);
 
-        errorLabel.setStyle("-fx-text-fill: #c5221f; -fx-font-size: 12px;");
+        errorLabel.getStyleClass().add("validation-error");
         errorLabel.setWrapText(true);
 
         content.getChildren().addAll(headerGrid, condHeader, condScroll, targetRow, errorLabel);
         dialog.getDialogPane().setContent(content);
+        ThemeManager.styleDialog(dialog);
 
         // Populate initial values
         if (existingRule != null) {

@@ -32,10 +32,14 @@ import com.tidyflow.core.watcher.FolderWatcherService;
 import com.tidyflow.core.watcher.WatchedFolderStatus;
 import com.tidyflow.data.BatchRecord;
 import com.tidyflow.data.BatchRepository;
+import com.tidyflow.data.DashboardStats;
 import com.tidyflow.data.OperationActionType;
 import com.tidyflow.data.OperationRecord;
 import com.tidyflow.data.OperationRepository;
 import com.tidyflow.data.OperationStatus;
+import com.tidyflow.data.RuleCount;
+import com.tidyflow.data.StatsRepository;
+import com.tidyflow.data.TimeBucketCount;
 import com.tidyflow.data.config.AppSettings;
 import com.tidyflow.data.config.RuleLoadResult;
 import com.tidyflow.data.config.RuleRepository;
@@ -43,8 +47,11 @@ import com.tidyflow.data.config.ScheduleConfig;
 import com.tidyflow.data.config.SettingsLoadResult;
 import com.tidyflow.data.config.SettingsRepository;
 import com.tidyflow.data.config.SettingsValidator;
+import com.tidyflow.data.config.ThemeMode;
 import com.tidyflow.data.config.WatchMode;
 import com.tidyflow.data.config.WatchedFolderConfig;
+import com.tidyflow.util.AppVersion;
+import com.tidyflow.util.ByteFormatter;
 import com.tidyflow.util.FileNameUtils;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleObjectProperty;
@@ -54,6 +61,8 @@ import javafx.collections.ObservableList;
 import javafx.concurrent.Task;
 import javafx.fxml.FXML;
 import javafx.geometry.Pos;
+import javafx.scene.chart.BarChart;
+import javafx.scene.chart.XYChart;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
@@ -68,33 +77,42 @@ import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
+import javafx.scene.control.ToggleButton;
+import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.Tooltip;
 import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeTableCell;
 import javafx.scene.control.TreeTableColumn;
 import javafx.scene.control.TreeTableView;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Window;
 
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.text.NumberFormat;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Controller for the main TidyFlow window (Organize, Duplicates, Rules, Automation, and History tabs).
+ * Controller for the main TidyFlow window (Dashboard, Organize, Duplicates, Rules, Automation, and History tabs).
  */
 public class MainController {
 
@@ -102,11 +120,15 @@ public class MainController {
     private static final String AUTOSTART_UNAVAILABLE_TOOLTIP = "Available in the installed version";
     private static final DateTimeFormatter DATE_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
+    private static final DateTimeFormatter SHORT_DATE_FORMATTER =
+            DateTimeFormatter.ofPattern("MMM d, yyyy HH:mm").withZone(ZoneId.systemDefault());
     private static final DateTimeFormatter ACTIVITY_TIME_FORMATTER =
             DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault());
 
     @FXML
     private TabPane mainTabPane;
+    @FXML
+    private Tab dashboardTab;
     @FXML
     private Tab organizeTab;
     @FXML
@@ -117,6 +139,42 @@ public class MainController {
     private Tab automationTab;
     @FXML
     private Tab historyTab;
+
+    // Dashboard tab controls
+    @FXML
+    private ToggleGroup dashboardRangeGroup;
+    @FXML
+    private ToggleButton range7DaysButton;
+    @FXML
+    private ToggleButton range30DaysButton;
+    @FXML
+    private ToggleButton range90DaysButton;
+    @FXML
+    private ToggleButton rangeAllTimeButton;
+    @FXML
+    private VBox dashboardEmptyStateBox;
+    @FXML
+    private GridPane dashboardContentGrid;
+    @FXML
+    private Label statFilesOrganizedLabel;
+    @FXML
+    private Label statSpaceOrganizedLabel;
+    @FXML
+    private Label statDuplicatesRemovedLabel;
+    @FXML
+    private Label statSpaceFreedLabel;
+    @FXML
+    private Label statBatchesLabel;
+    @FXML
+    private Label statLastActivityLabel;
+    @FXML
+    private Label filesPerPeriodChartTitle;
+    @FXML
+    private BarChart<String, Number> filesPerPeriodChart;
+    @FXML
+    private BarChart<Number, String> filesByRuleChart;
+    @FXML
+    private ListView<String> dashboardRecentBatchesListView;
 
     // Organize tab controls
     @FXML
@@ -253,6 +311,10 @@ public class MainController {
     private Button saveAutomationSettingsButton;
     @FXML
     private Label automationValidationLabel;
+    @FXML
+    private ComboBox<ThemeMode> themeCombo;
+    @FXML
+    private Label appVersionLabel;
 
     // History tab controls
     @FXML
@@ -303,12 +365,14 @@ public class MainController {
     private final FolderWatcherService folderWatcherService;
     private final DailySchedulerService dailySchedulerService;
     private final AutostartService autostartService;
+    private final StatsRepository statsRepository;
     private final RuleValidator ruleValidator = new RuleValidator();
     private final SettingsValidator settingsValidator = new SettingsValidator();
 
     private SystemTrayManager systemTrayManager;
     private Runnable showWindowCallback;
     private volatile AppSettings currentSettings = AppSettings.defaults();
+    private boolean updatingThemeCombo = false;
 
     private Path selectedFolder;
     private Path selectedDedupeFolder;
@@ -316,10 +380,14 @@ public class MainController {
     private Task<DedupeScanResult> currentDedupeTask;
     private final AtomicBoolean dedupeCancelRequested = new AtomicBoolean(false);
 
+    private Task<DashboardStats> currentDashboardTask;
+    private final AtomicLong dashboardQuerySequence = new AtomicLong(0);
+
     private final ObservableList<PlannedOperation> plannedOperations = FXCollections.observableArrayList();
     private final ObservableList<Rule> currentRules = FXCollections.observableArrayList();
     private final ObservableList<WatchedFolderConfig> watchedFolders = FXCollections.observableArrayList();
     private final ObservableList<String> activityItems = FXCollections.observableArrayList();
+    private final ObservableList<String> recentBatchItems = FXCollections.observableArrayList();
     private final ObservableList<BatchRecord> batches = FXCollections.observableArrayList();
     private final ObservableList<OperationRecord> batchOperations = FXCollections.observableArrayList();
 
@@ -338,7 +406,8 @@ public class MainController {
                 null,
                 null,
                 null,
-                new WindowsRegistryAutostartService()
+                new WindowsRegistryAutostartService(),
+                null
         );
     }
 
@@ -380,7 +449,8 @@ public class MainController {
                 null,
                 null,
                 null,
-                new WindowsRegistryAutostartService()
+                new WindowsRegistryAutostartService(),
+                null
         );
     }
 
@@ -400,6 +470,42 @@ public class MainController {
             DailySchedulerService dailySchedulerService,
             AutostartService autostartService
     ) {
+        this(
+                scanner,
+                ruleEngine,
+                executor,
+                batchRepository,
+                operationRepository,
+                undoManager,
+                duplicateFinder,
+                duplicateRemover,
+                ruleRepository,
+                settingsRepository,
+                automationPipeline,
+                folderWatcherService,
+                dailySchedulerService,
+                autostartService,
+                null
+        );
+    }
+
+    public MainController(
+            FolderScanner scanner,
+            RuleEngine ruleEngine,
+            FileExecutor executor,
+            BatchRepository batchRepository,
+            OperationRepository operationRepository,
+            UndoManager undoManager,
+            DuplicateFinder duplicateFinder,
+            DuplicateRemover duplicateRemover,
+            RuleRepository ruleRepository,
+            SettingsRepository settingsRepository,
+            AutomationPipeline automationPipeline,
+            FolderWatcherService folderWatcherService,
+            DailySchedulerService dailySchedulerService,
+            AutostartService autostartService,
+            StatsRepository statsRepository
+    ) {
         this.scanner = scanner;
         this.ruleEngine = ruleEngine;
         this.executor = executor;
@@ -414,6 +520,7 @@ public class MainController {
         this.folderWatcherService = folderWatcherService;
         this.dailySchedulerService = dailySchedulerService;
         this.autostartService = autostartService != null ? autostartService : new WindowsRegistryAutostartService();
+        this.statsRepository = statsRepository;
     }
 
     public void setSystemTrayManager(SystemTrayManager systemTrayManager) {
@@ -434,11 +541,193 @@ public class MainController {
 
     @FXML
     public void initialize() {
+        initDashboardTab();
         initOrganizeTab();
         initDuplicatesTab();
         initRulesTab();
         initAutomationTab();
         initHistoryTab();
+        refreshDashboard();
+    }
+
+    private void initDashboardTab() {
+        if (range7DaysButton == null) {
+            return;
+        }
+        if (dashboardRangeGroup != null) {
+            // Prevent deselecting all range buttons
+            dashboardRangeGroup.selectedToggleProperty().addListener((obs, oldToggle, newToggle) -> {
+                if (newToggle == null && oldToggle != null) {
+                    oldToggle.setSelected(true);
+                }
+            });
+        }
+        if (dashboardRecentBatchesListView != null) {
+            dashboardRecentBatchesListView.setItems(recentBatchItems);
+        }
+    }
+
+    @FXML
+    private void onDashboardTabSelected() {
+        if (dashboardTab != null && dashboardTab.isSelected()) {
+            refreshDashboard();
+        }
+    }
+
+    @FXML
+    private void onDashboardRangeChanged() {
+        refreshDashboard();
+    }
+
+    @FXML
+    private void onDashboardScanFolder() {
+        openOrganizeTab();
+    }
+
+    @FXML
+    private void onDashboardSetupAutomation() {
+        if (mainTabPane != null && automationTab != null) {
+            mainTabPane.getSelectionModel().select(automationTab);
+        }
+    }
+
+    @FXML
+    private void onOpenHistoryFromDashboard() {
+        openHistoryTab();
+    }
+
+    public void refreshDashboard() {
+        if (statsRepository == null || range30DaysButton == null) {
+            return;
+        }
+
+        if (currentDashboardTask != null && currentDashboardTask.isRunning()) {
+            currentDashboardTask.cancel(true);
+        }
+
+        final long requestId = dashboardQuerySequence.incrementAndGet();
+        final ZoneId localZone = ZoneId.systemDefault();
+        final LocalDate today = LocalDate.now(localZone);
+        final Instant startInclusive;
+
+        if (range7DaysButton.isSelected()) {
+            startInclusive = today.minusDays(6).atStartOfDay(localZone).toInstant();
+        } else if (range90DaysButton.isSelected()) {
+            startInclusive = today.minusDays(89).atStartOfDay(localZone).toInstant();
+        } else if (rangeAllTimeButton.isSelected()) {
+            startInclusive = null;
+        } else {
+            // Default: Last 30 days
+            startInclusive = today.minusDays(29).atStartOfDay(localZone).toInstant();
+        }
+
+        Task<DashboardStats> task = new Task<>() {
+            @Override
+            protected DashboardStats call() throws Exception {
+                return statsRepository.loadStats(startInclusive);
+            }
+        };
+
+        task.setOnSucceeded(event -> {
+            if (requestId != dashboardQuerySequence.get()) {
+                return; // Ignore stale result
+            }
+            DashboardStats stats = task.getValue();
+            applyDashboardStatsToUi(stats);
+        });
+
+        task.setOnFailed(event -> {
+            if (requestId != dashboardQuerySequence.get()) {
+                return;
+            }
+            Throwable ex = task.getException();
+            if (!(ex instanceof CancellationException)) {
+                statusLabel.setText("Dashboard refresh failed: " + (ex != null ? ex.getMessage() : "unknown error"));
+            }
+        });
+
+        currentDashboardTask = task;
+        Thread worker = new Thread(task, "tidyflow-dashboard-stats-thread");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private void applyDashboardStatsToUi(DashboardStats stats) {
+        if (stats == null) {
+            return;
+        }
+
+        NumberFormat intFormat = NumberFormat.getIntegerInstance(Locale.getDefault());
+        statFilesOrganizedLabel.setText(intFormat.format(stats.filesOrganized()));
+        statSpaceOrganizedLabel.setText(ByteFormatter.format(stats.spaceOrganizedBytes()));
+        statDuplicatesRemovedLabel.setText(intFormat.format(stats.duplicatesRemoved()));
+        statSpaceFreedLabel.setText(ByteFormatter.format(stats.spaceFreedBytes()));
+        statBatchesLabel.setText(intFormat.format(stats.batchesCount()));
+        statLastActivityLabel.setText(formatRelativeOrDate(stats.lastActivity()));
+
+        boolean empty = stats.isEmpty() && batches.isEmpty();
+        dashboardEmptyStateBox.setVisible(empty);
+        dashboardEmptyStateBox.setManaged(empty);
+        dashboardContentGrid.setVisible(!empty);
+        dashboardContentGrid.setManaged(!empty);
+
+        if (empty) {
+            return;
+        }
+
+        filesPerPeriodChartTitle.setText(stats.monthlyBuckets() ? "Files organized per month" : "Files organized per day");
+
+        XYChart.Series<String, Number> timeSeries = new XYChart.Series<>();
+        for (TimeBucketCount bucket : stats.filesPerPeriod()) {
+            timeSeries.getData().add(new XYChart.Data<>(bucket.label(), bucket.count()));
+        }
+        filesPerPeriodChart.getData().setAll(List.of(timeSeries));
+
+        List<RuleCount> topRules = new ArrayList<>(stats.topRulesWithOther());
+        Collections.reverse(topRules); // Reverse so the highest rule appears at the top of the horizontal BarChart
+        XYChart.Series<Number, String> ruleSeries = new XYChart.Series<>();
+        for (RuleCount rc : topRules) {
+            ruleSeries.getData().add(new XYChart.Data<>(rc.count(), rc.ruleName()));
+        }
+        filesByRuleChart.getData().setAll(List.of(ruleSeries));
+
+        List<String> recentLines = new ArrayList<>();
+        for (BatchRecord b : stats.recentBatches()) {
+            Instant batchInstant = b.finishedAt() != null ? b.finishedAt() : b.startedAt();
+            String formattedDate = batchInstant != null ? SHORT_DATE_FORMATTER.format(batchInstant) : "Unknown date";
+            String line = String.format(
+                    "%s%s  —  %s file(s), %s",
+                    formatBatchKindPrefix(b.kind()),
+                    formattedDate,
+                    intFormat.format(b.filesCount()),
+                    ByteFormatter.format(b.bytesMoved())
+            );
+            recentLines.add(line);
+        }
+        recentBatchItems.setAll(recentLines);
+    }
+
+    public static String formatRelativeOrDate(Instant timestamp) {
+        if (timestamp == null) {
+            return "No activity yet";
+        }
+        Duration diff = Duration.between(timestamp, Instant.now());
+        if (diff.isNegative() || diff.toSeconds() < 60) {
+            return "Just now";
+        }
+        long minutes = diff.toMinutes();
+        if (minutes < 60) {
+            return minutes == 1 ? "1 minute ago" : minutes + " minutes ago";
+        }
+        long hours = diff.toHours();
+        if (hours < 24) {
+            return hours == 1 ? "1 hour ago" : hours + " hours ago";
+        }
+        long days = diff.toDays();
+        if (days < 7) {
+            return days == 1 ? "Yesterday" : days + " days ago";
+        }
+        return SHORT_DATE_FORMATTER.format(timestamp);
     }
 
     private void initOrganizeTab() {
@@ -492,6 +781,7 @@ public class MainController {
                         warn.setTitle("Keeper Required");
                         warn.setHeaderText(null);
                         warn.setContentText("At least one copy in each duplicate group must be kept.");
+                        styleAlert(warn);
                         warn.showAndWait();
                         return;
                     }
@@ -525,7 +815,7 @@ public class MainController {
                 return new SimpleStringProperty(String.format(
                         "Group (%d files, %s each)",
                         row.group().files().size(),
-                        formatBytes(row.group().sizeBytes())
+                        ByteFormatter.format(row.group().sizeBytes())
                 ));
             }
             return new SimpleStringProperty(row.fileEntry().fileName());
@@ -548,9 +838,9 @@ public class MainController {
                 return new SimpleStringProperty("");
             }
             if (row.isGroupRow()) {
-                return new SimpleStringProperty(formatBytes(row.group().wastedBytes()) + " wasted");
+                return new SimpleStringProperty(ByteFormatter.format(row.group().wastedBytes()) + " wasted");
             }
-            return new SimpleStringProperty(formatBytes(row.fileEntry().sizeBytes()));
+            return new SimpleStringProperty(ByteFormatter.format(row.fileEntry().sizeBytes()));
         });
 
         dedupeModifiedColumn.setCellValueFactory(param -> {
@@ -646,6 +936,7 @@ public class MainController {
                     warn.setTitle("Rules Config Recovered");
                     warn.setHeaderText("Restored Default Rules");
                     warn.setContentText(result.warningMessage());
+                    styleAlert(warn);
                     warn.showAndWait();
                 });
             }
@@ -721,6 +1012,7 @@ public class MainController {
         confirm.setTitle("Confirm Delete Rule");
         confirm.setHeaderText("Delete rule '" + target.name() + "'?");
         confirm.setContentText("Are you sure you want to delete this rule?");
+        styleAlert(confirm);
 
         Optional<ButtonType> choice = confirm.showAndWait();
         if (choice.isEmpty() || choice.get() != ButtonType.OK) {
@@ -759,6 +1051,7 @@ public class MainController {
         confirm.setTitle("Confirm Reset Rules");
         confirm.setHeaderText("Reset all rules to built-in defaults?");
         confirm.setContentText("Any custom rules or edits will be replaced by the default rules.");
+        styleAlert(confirm);
 
         Optional<ButtonType> choice = confirm.showAndWait();
         if (choice.isEmpty() || choice.get() != ButtonType.OK) {
@@ -886,6 +1179,7 @@ public class MainController {
                         confirm.setHeaderText("Switch '" + current.path().getFileName() + "' to AUTO mode?");
                         confirm.setContentText("Files in this folder will be moved automatically using your saved rules.\n"
                                 + "Every batch is recorded and can be undone from the History tab.");
+                        styleAlert(confirm);
                         Optional<ButtonType> result = confirm.showAndWait();
                         if (result.isEmpty() || result.get() != ButtonType.OK) {
                             updatingGraphic = true;
@@ -946,6 +1240,13 @@ public class MainController {
 
         activityListView.setItems(activityItems);
 
+        if (themeCombo != null) {
+            themeCombo.setItems(FXCollections.observableArrayList(ThemeMode.values()));
+        }
+        if (appVersionLabel != null) {
+            appVersionLabel.setText("TidyFlow " + AppVersion.load());
+        }
+
         if (!autostartService.isAvailable()) {
             startWithWindowsCheckBox.setDisable(true);
             Tooltip tip = new Tooltip(AUTOSTART_UNAVAILABLE_TOOLTIP);
@@ -964,6 +1265,7 @@ public class MainController {
                 public void onAutoBatchCompleted(String batchKind, Path folder, int movedCount, Long batchId) {
                     Platform.runLater(() -> {
                         refreshHistory();
+                        refreshDashboard();
                         if (systemTrayManager != null) {
                             systemTrayManager.notifyBatchOrganized(movedCount);
                         }
@@ -1003,6 +1305,7 @@ public class MainController {
                     warn.setTitle("Settings Config Recovered");
                     warn.setHeaderText("Restored Default Settings");
                     warn.setContentText(loadResult.warningMessage());
+                    styleAlert(warn);
                     warn.showAndWait();
                 });
             }
@@ -1023,6 +1326,13 @@ public class MainController {
         scheduleTimeField.setText(settings.schedule().timeOfDay());
         automationValidationLabel.setText("");
 
+        if (themeCombo != null) {
+            updatingThemeCombo = true;
+            themeCombo.setValue(settings.theme());
+            updatingThemeCombo = false;
+        }
+        ThemeManager.applyTheme(settings.theme());
+
         if (automationPipeline != null) {
             automationPipeline.setMassMoveGuardThreshold(settings.massMoveGuardThreshold());
         }
@@ -1037,6 +1347,46 @@ public class MainController {
         }
         refreshActivityList();
         updateAutomationStatusUi();
+    }
+
+    @FXML
+    private void onThemeChanged() {
+        if (updatingThemeCombo || themeCombo == null) {
+            return;
+        }
+        ThemeMode newTheme = themeCombo.getValue();
+        if (newTheme == null || newTheme == currentSettings.theme()) {
+            return;
+        }
+        applyThemeAndPersist(newTheme);
+    }
+
+    private void applyThemeAndPersist(ThemeMode newTheme) {
+        AppSettings updated = new AppSettings(
+                currentSettings.watchedFolders(),
+                currentSettings.settleSeconds(),
+                currentSettings.massMoveGuardThreshold(),
+                currentSettings.showNotifications(),
+                currentSettings.minimizeToTray(),
+                currentSettings.startWithWindows(),
+                currentSettings.schedule(),
+                newTheme
+        );
+        this.currentSettings = updated;
+        ThemeManager.applyTheme(newTheme);
+
+        Thread saveWorker = new Thread(() -> {
+            try {
+                if (settingsRepository != null) {
+                    settingsRepository.save(updated);
+                }
+                Platform.runLater(() -> statusLabel.setText("Theme updated to " + newTheme + "."));
+            } catch (Exception e) {
+                Platform.runLater(() -> statusLabel.setText("Failed to save theme: " + e.getMessage()));
+            }
+        }, "tidyflow-theme-save-thread");
+        saveWorker.setDaemon(true);
+        saveWorker.start();
     }
 
     @FXML
@@ -1096,7 +1446,8 @@ public class MainController {
                 currentSettings.showNotifications(),
                 currentSettings.minimizeToTray(),
                 currentSettings.startWithWindows(),
-                currentSettings.schedule()
+                currentSettings.schedule(),
+                currentSettings.theme()
         );
         validateAndPersistSettingsAsync(candidate, selectIndex);
     }
@@ -1106,6 +1457,9 @@ public class MainController {
         int settleSecs = parseIntOrInvalid(settleSecondsField.getText());
         int guardThreshold = parseIntOrInvalid(massMoveGuardField.getText());
         String scheduleTime = scheduleTimeField.getText() != null ? scheduleTimeField.getText().trim() : "";
+        ThemeMode selectedTheme = themeCombo != null && themeCombo.getValue() != null
+                ? themeCombo.getValue()
+                : currentSettings.theme();
 
         AppSettings candidate = new AppSettings(
                 List.copyOf(watchedFolders),
@@ -1114,7 +1468,8 @@ public class MainController {
                 showNotificationsCheckBox.isSelected(),
                 minimizeToTrayCheckBox.isSelected(),
                 startWithWindowsCheckBox.isSelected() && autostartService.isAvailable(),
-                new ScheduleConfig(scheduleEnabledCheckBox.isSelected(), scheduleTime)
+                new ScheduleConfig(scheduleEnabledCheckBox.isSelected(), scheduleTime),
+                selectedTheme
         );
         validateAndPersistSettingsAsync(candidate, watchedFoldersTable.getSelectionModel().getSelectedIndex());
     }
@@ -1235,7 +1590,7 @@ public class MainController {
         batchFilesColumn.setCellValueFactory(cell ->
                 new SimpleStringProperty(String.valueOf(cell.getValue().filesCount())));
         batchSizeColumn.setCellValueFactory(cell ->
-                new SimpleStringProperty(formatBytes(cell.getValue().bytesMoved())));
+                new SimpleStringProperty(ByteFormatter.format(cell.getValue().bytesMoved())));
         batchesTable.setItems(batches);
 
         opFileNameColumn.setCellValueFactory(cell -> {
@@ -1303,6 +1658,7 @@ public class MainController {
         confirm.setTitle("Confirm Organization");
         confirm.setHeaderText("Apply planned file moves?");
         confirm.setContentText("Move " + snapshot.size() + " file(s) to their target folders?");
+        styleAlert(confirm);
 
         Optional<ButtonType> choice = confirm.showAndWait();
         if (choice.isEmpty() || choice.get() != ButtonType.OK) {
@@ -1328,6 +1684,7 @@ public class MainController {
             setOrganizeControlsDisabled(false);
             applyButton.setDisable(true);
             refreshHistory();
+            refreshDashboard();
 
             if (!batchResult.databaseSaved()) {
                 showError(
@@ -1342,6 +1699,7 @@ public class MainController {
                 summaryAlert.setTitle("Organization Complete");
                 summaryAlert.setHeaderText("Execution Summary");
                 summaryAlert.setContentText(summary);
+                styleAlert(summaryAlert);
                 summaryAlert.showAndWait();
             }
         });
@@ -1428,7 +1786,7 @@ public class MainController {
                     "Found %d duplicate group(s) (%d duplicate files, %s wasted).",
                     result.groupCount(),
                     result.duplicateFileCount(),
-                    formatBytes(result.wastedBytes())
+                    ByteFormatter.format(result.wastedBytes())
             ));
         });
 
@@ -1485,8 +1843,9 @@ public class MainController {
         confirm.setContentText(String.format(
                 "Send %d selected file(s) (%s) to the Recycle Bin?",
                 totalFiles,
-                formatBytes(totalBytes)
+                ByteFormatter.format(totalBytes)
         ));
+        styleAlert(confirm);
 
         Optional<ButtonType> choice = confirm.showAndWait();
         if (choice.isEmpty() || choice.get() != ButtonType.OK) {
@@ -1510,6 +1869,7 @@ public class MainController {
             String formatted = summary.formatSummary();
             statusLabel.setText("Dedupe complete: " + formatted);
             refreshHistory();
+            refreshDashboard();
 
             Alert info = new Alert(Alert.AlertType.INFORMATION);
             info.setTitle("Duplicate Removal Complete");
@@ -1519,6 +1879,7 @@ public class MainController {
                 body += "\n\nDetails:\n" + String.join("\n", summary.details());
             }
             info.setContentText(body);
+            styleAlert(info);
             info.showAndWait();
 
             onFindDuplicates();
@@ -1589,7 +1950,7 @@ public class MainController {
                 "%d groups | %d files selected | %s to free",
                 groupCount,
                 selectedFiles,
-                formatBytes(bytesToFree)
+                ByteFormatter.format(bytesToFree)
         ));
         removeDuplicatesButton.setDisable(selectedFiles == 0);
     }
@@ -1681,6 +2042,7 @@ public class MainController {
         confirm.setTitle("Confirm Batch Undo");
         confirm.setHeaderText("Undo entire batch?");
         confirm.setContentText("Restore eligible files from batch #" + selectedBatch.id() + " back to their original locations?");
+        styleAlert(confirm);
 
         Optional<ButtonType> choice = confirm.showAndWait();
         if (choice.isEmpty() || choice.get() != ButtonType.OK) {
@@ -1702,6 +2064,7 @@ public class MainController {
         confirm.setTitle("Confirm File Undo");
         confirm.setHeaderText("Undo selected file move?");
         confirm.setContentText("Restore " + selectedOp.destPath().getFileName() + " back to " + selectedOp.sourcePath() + "?");
+        styleAlert(confirm);
 
         Optional<ButtonType> choice = confirm.showAndWait();
         if (choice.isEmpty() || choice.get() != ButtonType.OK) {
@@ -1730,6 +2093,7 @@ public class MainController {
             statusLabel.setText("Undo complete: " + formatted);
             setHistoryControlsDisabled(false);
             refreshHistoryAndReselect(batchIdToReselect);
+            refreshDashboard();
 
             Alert info = new Alert(Alert.AlertType.INFORMATION);
             info.setTitle("Undo Complete");
@@ -1739,6 +2103,7 @@ public class MainController {
                 body += "\n\nDetails:\n" + String.join("\n", summary.messages());
             }
             info.setContentText(body);
+            styleAlert(info);
             info.showAndWait();
         });
 
@@ -1875,20 +2240,10 @@ public class MainController {
         }
     }
 
-    private static String formatBytes(long bytes) {
-        if (bytes < 1024) {
-            return bytes + " B";
+    private void styleAlert(Alert alert) {
+        if (alert != null) {
+            ThemeManager.styleDialog(alert);
         }
-        double kb = bytes / 1024.0;
-        if (kb < 1024) {
-            return String.format("%.1f KB", kb);
-        }
-        double mb = kb / 1024.0;
-        if (mb < 1024) {
-            return String.format("%.1f MB", mb);
-        }
-        double gb = mb / 1024.0;
-        return String.format("%.2f GB", gb);
     }
 
     private void showError(String title, String message) {
@@ -1896,6 +2251,7 @@ public class MainController {
         alert.setTitle(title);
         alert.setHeaderText(null);
         alert.setContentText(message);
+        styleAlert(alert);
         alert.showAndWait();
     }
 
@@ -1903,7 +2259,7 @@ public class MainController {
         if (kind == null) {
             return "[Organize] ";
         }
-        return switch (kind.toUpperCase(java.util.Locale.ROOT)) {
+        return switch (kind.toUpperCase(Locale.ROOT)) {
             case "AUTO" -> "[Auto] ";
             case "SCHEDULED" -> "[Scheduled] ";
             case "DEDUPE" -> "[Dedupe] ";

@@ -168,14 +168,16 @@ public class SystemTrayManager implements AutoCloseable {
     }
 
     private static Image loadOrCreateTrayImage() {
-        try (InputStream in = SystemTrayManager.class.getResourceAsStream("/com/tidyflow/ui/tray-icon.png")) {
-            if (in != null) {
-                BufferedImage img = ImageIO.read(in);
-                if (img != null) {
-                    return img;
+        for (String path : new String[]{"/icons/icon-32.png", "/icons/icon-16.png", "/com/tidyflow/ui/tray-icon.png"}) {
+            try (InputStream in = SystemTrayManager.class.getResourceAsStream(path)) {
+                if (in != null) {
+                    BufferedImage img = ImageIO.read(in);
+                    if (img != null) {
+                        return img;
+                    }
                 }
+            } catch (Exception ignored) {
             }
-        } catch (Exception ignored) {
         }
 
         BufferedImage image = new BufferedImage(32, 32, BufferedImage.TYPE_INT_ARGB);
