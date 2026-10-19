@@ -1,21 +1,29 @@
 # TidyFlow
 
-TidyFlow is a Windows desktop application built with Java and JavaFX that organizes cluttered folders (such as `Downloads`) using customizable rules, watches folders in the background or on a daily schedule, finds duplicate files safely, and tracks every operation in a local SQLite history.
+TidyFlow is a Windows desktop application built with Java and JavaFX that organizes cluttered folders (such as `Downloads`) using customizable rules, watches folders in the background or on a daily schedule, finds duplicate files safely, and tracks every operation in a local SQLite history with an interactive statistics Dashboard and Light/Dark themes.
 
 ## Screenshots
 
-> **[TODO: Add application screenshots here — Organize tab, Duplicates tab, Rules editor tab, Automation tab, and History tab]**
+> **[TODO: Add application screenshots here — Dashboard tab, Organize tab, Duplicates tab, Rules tab, Automation tab, and History tab]**
+
+## Application Tabs
+1. **Dashboard**: Home screen with a date range selector (`Last 7 days`, `Last 30 days`, `Last 90 days`, `All time`), six summary cards (`Files organized`, `Space organized`, `Duplicates removed`, `Space freed`, `Batches`, `Last activity`), two charts (**Files organized per day/month** and **Files by rule**), and a **Recent activity** list.
+2. **Organize**: Choose any folder, run a non-recursive dry-run scan against your prioritized rules, preview every planned file move, and apply moves in a single recorded batch.
+3. **Duplicates**: Scan folders (with optional subfolder recursion and minimum file size filter) using a fast three-stage hash pipeline, choose a keeper strategy, and move selected duplicate copies to the Windows Recycle Bin.
+4. **Rules**: Create, edit, duplicate, delete, reorder, and toggle rules (`Extension`, `Filename Regex`, `Minimum Size`, `Older Than N Days`), or test sample files live in the **Try it** dry-run box.
+5. **Automation**: Configure watched folders (`OFF`, `ASK`, `AUTO`), pause/resume background watching, inspect live watcher activity, set a daily schedule (`HH:mm`), and switch the application **Theme** (`SYSTEM`, `LIGHT`, `DARK`).
+6. **History**: Browse past `Organize`, `Auto`, `Scheduled`, and `Dedupe` batches and undo any file move or entire batch with one click.
 
 ## Features
+- **Interactive Statistics Dashboard**: Aggregated SQL metrics, zero-filled daily/monthly activity bar charts, top-8 + `"Other"` rule breakdown chart, and recent batch summaries.
+- **Light, Dark & System Themes**: Clean 8 px grid CSS design system (`base.css`, `light.css`, `dark.css`) that automatically detects the Windows `AppsUseLightTheme` registry setting in `SYSTEM` mode or lets you switch between `LIGHT` and `DARK` instantly.
 - **Safe Non-Recursive Scanning**: Scans a target folder while skipping subdirectories, hidden files, and active downloads (`.crdownload`, `.part`, `.tmp`).
-- **Rule-Based Dry-Run Preview**: Matches files against prioritized rules (`Extension`, `Filename Regex`, `Minimum Size`, `Older Than N Days`) and previews planned moves before touching any files.
-- **Custom Rule Editor & Live Dry-Run Tester**: Create, edit, duplicate, delete, reorder, and toggle rules in the **Rules** tab, or test sample file names, sizes, and ages in the **Try it** box. Rules are validated and saved atomically to `rules.json`.
+- **Rule-Based Dry-Run Preview & Custom Rule Editor**: Matches files against prioritized rules and previews planned moves before touching any files. Rules are validated and saved atomically to `rules.json`.
 - **Background Folder Watcher & Daily Scheduler**: Watch folders non-recursively in `ASK` or `AUTO` mode, pause/resume watching at any time, or run an automated pass once a day at a scheduled time (`HH:mm`).
 - **System Tray & Single Instance**: Minimize to the Windows system tray, receive balloon notifications when files are organized or ready for review, and optionally start with Windows in packaged builds.
 - **Safe File Execution**: Moves files in the background, creates missing target directories, renames conflicting files (`name (1).ext`, `name (2).ext`), and blocks modifications inside protected Windows directories (`C:\Windows`, `Program Files`).
-- **Fast Three-Stage Duplicate Finder**: Groups files by size, 4 KB head/tail quick hash, and full streaming 64 KB SHA-256 hash in parallel, caching hashes in SQLite (`file_index`) so unchanged files are not re-read on future scans.
-- **Keeper Strategies & Safe Recycle Bin Removal**: Automatically suggests which copy to keep (`Oldest modified`, `Newest modified`, or `Shortest path`), guarantees at least one copy per group is kept, re-verifies file size and modified time before removal, and sends selected duplicates to the Windows Recycle Bin.
-- **SQLite History & Undo**: Browse past `Organize`, `Auto`, `Scheduled`, and `Dedupe` batches in the **History** tab and safely undo file moves without overwriting existing files or deleting folders.
+- **Fast Three-Stage Duplicate Finder & Recycle Bin Removal**: Groups files by size, 4 KB head/tail quick hash, and full streaming 64 KB SHA-256 hash in parallel, caching hashes in SQLite (`file_index`) and sending selected duplicates safely to the Windows Recycle Bin.
+- **SQLite History & Undo**: Browse past batches in the **History** tab and safely undo file moves without overwriting existing files or deleting folders.
 
 ## How Automation Works and Why It Is Safe
 - **`ASK` Mode by Default**: Newly added watched folders always start in `ASK` mode—TidyFlow never moves files automatically unless you explicitly switch a folder to `AUTO` and confirm. In `ASK` mode, TidyFlow notifies you when files are ready and opens the normal preview so you stay in control.
@@ -43,7 +51,8 @@ TidyFlow is a Windows desktop application built with Java and JavaFX that organi
   "schedule": {
     "enabled": false,
     "timeOfDay": "09:00"
-  }
+  },
+  "theme": "SYSTEM"
 }
 ```
 
@@ -124,4 +133,9 @@ TidyFlow **never deletes files permanently**. Duplicate files removed in the **D
 ### Run the Tests
 ```powershell
 .\gradlew test
+```
+
+### Regenerate Application Icons
+```powershell
+.\gradlew generateIcons
 ```

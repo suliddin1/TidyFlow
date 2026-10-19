@@ -168,4 +168,51 @@ class RepositoryTest {
         assertEquals("Documents", op.ruleName());
         assertEquals(OperationStatus.SUCCESS, op.status());
     }
+
+    @Test
+    void v2DatabaseMigratesToV3AndCreatesStatsIndexes(@TempDir Path tempDir) throws Exception {
+        DatabaseManager dbManager = new DatabaseManager(tempDir.resolve("upgrade-v3.db"));
+
+        // 1. Migrate up to V2 and insert sample data
+        dbManager.migrateUpTo(2);
+        BatchRepository batchRepo = new BatchRepository(dbManager);
+        OperationRepository opRepo = new OperationRepository(dbManager);
+        Instant now = Instant.parse("2026-10-19T12:00:00Z");
+        batchRepo.createBatchWithOperations(
+                "MANUAL",
+                now,
+                now,
+                1,
+                512L,
+                List.of(OperationRecord.unsaved(
+                        "Documents",
+                        Path.of("C:\\a.txt"),
+                        Path.of("C:\\Docs\\a.txt"),
+                        512L,
+                        OperationStatus.SUCCESS,
+                        null,
+                        now
+                )),
+                opRepo
+        );
+
+        // 2. Migrate to V3 (and run twice to verify idempotency)
+        dbManager.migrate();
+        dbManager.migrate();
+
+        // 3. Verify V3 indexes exist in sqlite_master
+        java.util.Set<String> indexNames = new java.util.HashSet<>();
+        try (java.sql.Connection conn = dbManager.openConnection();
+             java.sql.Statement stmt = conn.createStatement();
+             java.sql.ResultSet rs = stmt.executeQuery("SELECT name FROM sqlite_master WHERE type = 'index'")) {
+            while (rs.next()) {
+                indexNames.add(rs.getString("name"));
+            }
+        }
+
+        assertTrue(indexNames.contains("idx_operations_status_created_at"));
+        assertTrue(indexNames.contains("idx_operations_action_status_created_at"));
+        assertTrue(indexNames.contains("idx_batches_finished_at"));
+        assertEquals(1, batchRepo.findAllNewestFirst().size());
+    }
 }

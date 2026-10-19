@@ -88,4 +88,29 @@ class SettingsRepositoryTest {
         assertTrue(Files.exists(result.backupPath()));
         assertEquals(AppSettings.defaults(), result.settings());
     }
+
+    @Test
+    void legacySettingsJsonWithoutThemeFieldDefaultsToSystem(@TempDir Path tempDir) throws Exception {
+        Path settingsPath = tempDir.resolve("settings.json");
+        Files.writeString(settingsPath, """
+                {
+                  "version": 1,
+                  "watchedFolders": [],
+                  "settleSeconds": 8,
+                  "massMoveGuardThreshold": 40,
+                  "showNotifications": true,
+                  "minimizeToTray": true,
+                  "startWithWindows": false,
+                  "schedule": { "enabled": false, "timeOfDay": "09:00" }
+                }
+                """);
+
+        SettingsRepository repo = new SettingsRepository(settingsPath);
+        SettingsLoadResult result = repo.load();
+
+        assertFalse(result.recoveredFromBackup());
+        assertEquals(ThemeMode.SYSTEM, result.settings().theme());
+        assertEquals(8, result.settings().settleSeconds());
+        assertEquals(40, result.settings().massMoveGuardThreshold());
+    }
 }
