@@ -14,10 +14,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Executes planned file moves safely, creating target folders as needed,
@@ -26,9 +30,12 @@ import java.util.Objects;
  */
 public class FileExecutor {
 
+    private static final Duration SELF_MOVE_RETENTION = Duration.ofSeconds(10);
+
     private final BatchRepository batchRepository;
     private final OperationRepository operationRepository;
     private final Path fallbackLogPath;
+    private final Map<String, Instant> selfMoveExpirations = new ConcurrentHashMap<>();
 
     public FileExecutor() {
         this(null, null, DatabaseManager.defaultFallbackLogPath());
@@ -46,6 +53,26 @@ public class FileExecutor {
         this.batchRepository = batchRepository;
         this.operationRepository = operationRepository;
         this.fallbackLogPath = Objects.requireNonNull(fallbackLogPath, "fallbackLogPath must not be null");
+    }
+
+    public void recordSelfMove(Path path) {
+        if (path != null) {
+            selfMoveExpirations.put(normalizeKey(path), Instant.now().plus(SELF_MOVE_RETENTION));
+        }
+    }
+
+    public boolean isRecentSelfMove(Path path) {
+        if (path == null) {
+            return false;
+        }
+        Instant now = Instant.now();
+        selfMoveExpirations.entrySet().removeIf(entry -> entry.getValue().isBefore(now));
+        Instant expiry = selfMoveExpirations.get(normalizeKey(path));
+        return expiry != null && !expiry.isBefore(now);
+    }
+
+    private static String normalizeKey(Path path) {
+        return path.toAbsolutePath().normalize().toString().replace('/', '\\').toLowerCase(Locale.ROOT);
     }
 
     public List<OperationResult> execute(List<PlannedOperation> operations) {
@@ -129,7 +156,11 @@ public class FileExecutor {
             }
 
             Path finalDestination = resolveNonConflictingPath(destination);
+            recordSelfMove(source);
+            recordSelfMove(finalDestination);
             Files.move(source, finalDestination);
+            recordSelfMove(source);
+            recordSelfMove(finalDestination);
             return OperationResult.success(operation, finalDestination, sizeBytes);
         } catch (Exception e) {
             return OperationResult.failure(operation, e.getMessage(), sizeBytes);

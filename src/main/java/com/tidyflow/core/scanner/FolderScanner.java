@@ -56,6 +56,17 @@ public class FolderScanner {
             return false;
         }
         String extension = FileNameUtils.getExtension(fileName);
-        return !IN_PROGRESS_EXTENSIONS.contains(extension);
+        return !isInProgressExtension(extension);
+    }
+
+    public static boolean isInProgressExtension(String extension) {
+        return extension != null && IN_PROGRESS_EXTENSIONS.contains(extension.toLowerCase(java.util.Locale.ROOT));
+    }
+
+    public static boolean isInProgressFileName(String fileName) {
+        if (fileName == null) {
+            return false;
+        }
+        return isInProgressExtension(FileNameUtils.getExtension(fileName));
     }
 }
