@@ -15,9 +15,14 @@ build/
 *.war
 *.nar
 *.ear
+*.exe
+*.msi
 *.zip
 *.tar.gz
 *.rar
+!packaging/windows/icon.ico
+!src/main/resources/icons/*.png
+!src/main/resources/icons/*.ico
 hs_err_pid*
 replay_pid*
 
