@@ -48,15 +48,19 @@ public class TidyFlowApp extends Application {
 
     @Override
     public void start(Stage primaryStage) throws Exception {
+        AppArguments appArgs = AppArguments.parse(getParameters().getRaw().toArray(String[]::new));
+
         instanceLock = new SingleInstanceLock();
         if (!instanceLock.tryAcquire()) {
-            ThemeManager.applyTheme(ThemeMode.SYSTEM);
-            Alert alert = new Alert(Alert.AlertType.INFORMATION);
-            alert.setTitle("TidyFlow");
-            alert.setHeaderText(null);
-            alert.setContentText("TidyFlow is already running (check the system tray)");
-            ThemeManager.styleDialog(alert);
-            alert.showAndWait();
+            if (!appArgs.background()) {
+                ThemeManager.applyTheme(ThemeMode.SYSTEM);
+                Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                alert.setTitle("TidyFlow");
+                alert.setHeaderText(null);
+                alert.setContentText("TidyFlow is already running (check the system tray)");
+                ThemeManager.styleDialog(alert);
+                alert.showAndWait();
+            }
             Platform.exit();
             return;
         }
@@ -180,7 +184,15 @@ public class TidyFlowApp extends Application {
         primaryStage.setMinWidth(960);
         primaryStage.setMinHeight(640);
         primaryStage.setScene(scene);
-        primaryStage.show();
+
+        boolean startHidden = AppArguments.shouldStartHidden(
+                appArgs.background(),
+                systemTrayManager.isSupportedAndInstalled(),
+                controller.getCurrentSettings().minimizeToTray()
+        );
+        if (!startHidden) {
+            primaryStage.show();
+        }
     }
 
     private void shutdownAndExit() {
