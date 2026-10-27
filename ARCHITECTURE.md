@@ -34,7 +34,7 @@ The application follows a strict three-layer architecture to keep UI rendering, 
 ```
 
 ## 1. UI Layer (`com.tidyflow.ui`, `com.tidyflow.app`)
-- **Responsibility**: Presents six tabs (**Dashboard**, **Organize**, **Duplicates**, **Rules**, **Automation**, and **History**) in `main-view.fxml` controlled by `MainController`, plus AWT system tray integration (`SystemTrayManager`), visual theme management (`ThemeManager`), and single-instance enforcement (`SingleInstanceLock`).
+- **Responsibility**: Presents six tabs (**Dashboard**, **Organize**, **Duplicates**, **Rules**, **Automation**, and **History**) in `main-view.fxml` controlled by `MainController`, plus AWT system tray integration (`SystemTrayManager`), visual theme management (`ThemeManager`), command-line mode dispatch (`Main`, `AppArguments`, `SelfCheckRunner`), and single-instance enforcement (`SingleInstanceLock`).
   - **Dashboard Tab** (default home screen):
     - Range selector (`Last 7 days`, `Last 30 days` default, `Last 90 days`, `All time`).
     - Six summary cards (`Files organized`, `Space organized`, `Duplicates removed`, `Space freed`, `Batches`, and `Last activity`).
@@ -57,9 +57,12 @@ The application follows a strict three-layer architecture to keep UI rendering, 
 - **Icon Generation (`src/tools/java/com/tidyflow/tools/IconGeneratorMain.java`)**: A dev-only Java2D utility compiled in a separate `tools` Gradle source set (excluded from the main application JAR). Running `./gradlew generateIcons` renders TidyFlow's rounded blue gradient folder + sorting arrow icon at `16`, `32`, `48`, `64`, `128`, and `256` px (`src/main/resources/icons/icon-<size>.png`) and packs a multi-resolution Windows `.ico` file (`src/main/resources/icons/icon.ico` and `packaging/windows/icon.ico`).
 - **Version Resource (`AppVersion`)**: Reads the Gradle project version (`1.0.0`) filtered into `src/main/resources/version.properties` at build time, falling back to `"dev"` if missing.
 
-### System Tray & Application Lifecycle (`TidyFlowApp`, `SystemTrayManager`, `SingleInstanceLock`, `WindowsRegistryAutostartService`)
-- **Single Instance**: `SingleInstanceLock` acquires an OS file lock on `%APPDATA%\TidyFlow\app.lock`. A second instance shows `"TidyFlow is already running (check the system tray)"` and exits.
+### System Tray, Autostart & `--background` Startup (`TidyFlowApp`, `AppArguments`, `SystemTrayManager`, `SingleInstanceLock`, `WindowsRegistryAutostartService`)
+- **Single Instance**: `SingleInstanceLock` acquires an OS file lock on `%APPDATA%\TidyFlow\app.lock`. A second interactive instance shows `"TidyFlow is already running (check the system tray)"` and exits; a second `--background` instance exits quietly.
 - **System Tray**: Calls `Platform.setImplicitExit(false)`, creates the `TrayIcon` on the AWT Event Dispatch Thread (`SwingUtilities.invokeLater`), loads the 16 px / 32 px generated icon resource (with programmatic fallback), and marshals callbacks back to JavaFX via `Platform.runLater`.
+- **Autostart & `--background`**:
+  - `WindowsRegistryAutostartService` is active when `jpackage.app-path` is set by the packaged launcher. When enabled, it writes `"<launcher-path>" --background` to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` under value `TidyFlow` (preserving quotes around paths with spaces).
+  - `AppArguments.shouldStartHidden(background, traySupported, minimizeToTray)` is a pure decision function: TidyFlow starts hidden in the tray only when `--background` was passed, `SystemTray` is supported, and `minimizeToTray` is enabled in `settings.json`. Otherwise, `primaryStage.show()` opens the window normally.
 
 ## 2. Core Services Layer (`com.tidyflow.core.*`, `com.tidyflow.util`)
 
@@ -102,8 +105,32 @@ RuleEngine (pure dry-run plan for direct child files)
 - **JSON Rule Configuration (`RuleRepository`, `RulesConfigDocument`)**:
   - Stored at `%APPDATA%\TidyFlow\rules.json` with atomic save and `.bak-<timestamp>` recovery.
 - **SQLite Database & Statistics (`DatabaseManager`, `BatchRepository`, `OperationRepository`, `FileIndexRepository`, `StatsRepository`)**:
-  - Stored at `%APPDATA%\TidyFlow\tidyflow.db` with idempotent versioned migrations:
-    - `V1__init.sql`: `batches` and `operations` tables.
-    - `V2__dedupe_and_index.sql`: `file_index` hash cache table and `action_type` column on `operations`.
-    - `V3__stats_indexes.sql`: covering indexes on `operations(status, created_at)`, `operations(action_type, status, created_at)`, and `batches(finished_at)`.
-  - **`StatsRepository`**: Computes dashboard metrics using aggregated SQL queries (`COUNT`, `COALESCE(SUM(size_bytes), 0)`, `GROUP BY rule_name`, `MAX(finished_at)`) over optional `startInclusive` timestamps (`julianday(created_at) >= julianday(?)`), excluding `UNDONE` operations from organized counts and separating `TRASHED` duplicate removals from `MOVE` operations.
+  - Stored at `%APPDATA%\TidyFlow\tidyflow.db` with idempotent versioned migrations (`V1__init.sql`, `V2__dedupe_and_index.sql`, `V3__stats_indexes.sql`).
+  - **`StatsRepository`**: Computes dashboard metrics using aggregated SQL queries over optional `startInclusive` timestamps, excluding `UNDONE` operations from organized counts and separating `TRASHED` duplicate removals from `MOVE` operations.
+
+## 4. Packaging, Self-Check & CI/CD Pipeline
+
+### Headless `--self-check` (`Main`, `AppArguments`, `SelfCheckRunner`)
+- `Main.main` parses command-line flags via `AppArguments.parse(args)` **before** calling `Application.launch(...)`.
+- When invoked with `--self-check [--out <file>]`, `SelfCheckRunner.execute(...)` runs completely headlessly without starting the JavaFX display toolkit, creating a tray icon, acquiring `SingleInstanceLock`, or touching `%APPDATA%\TidyFlow`.
+- Inside a fresh temporary directory (deleted in a `finally` block), it verifies four subsystems:
+  1. `version`: classpath `/version.properties` exists and resolves a real version string.
+  2. `sqlite`: creates a temp SQLite database, applies all migrations (`V1`–`V3`), and executes a batch/operation write + read round-trip.
+  3. `settings`: saves and reloads a temporary `settings.json` via `SettingsRepository`.
+  4. `classes`: loads and links `javafx.scene.control.TableView`, `javafx.fxml.FXMLLoader`, `java.awt.SystemTray`, and `org.sqlite.JDBC` (`Class.forName(..., false, classLoader)`) without starting a display.
+- Writes one `OK <check>` or `FAIL <check>: <reason>` line per step plus a final `RESULT OK` or `RESULT FAIL` line to `--out <file>` and exits with code `0` (success) or `1` (failure).
+
+### Gradle Packaging Pipeline (`build.gradle.kts`, `gradle.properties`, `scripts/verify-package.ps1`)
+- Implemented directly as Kotlin DSL tasks in `build.gradle.kts` using standard JDK tools (`jdeps`, `jlink`, `jpackage`) rather than third-party packaging plugins, avoiding external plugin compatibility issues across Gradle and JDK versions:
+  1. `preparePackageInput`: stages `tidyflow-<version>.jar` and all runtime dependency JARs (including platform-specific OpenJFX JARs with native Windows libraries, `sqlite-jdbc`, `jackson`, and `slf4j-nop`) into `build/packaging/input`.
+  2. `createRuntimeImage`: prefers a JDK 21 toolchain via `javaToolchains` (falling back to the running JDK locally if JDK 21 is not installed), runs `jdeps --multi-release 21 --ignore-missing-deps --print-module-deps` across all staged JARs, unions with the baseline module set (`java.base`, `java.desktop`, `java.sql`, `java.logging`, `java.xml`, `java.scripting`, `jdk.unsupported`), and builds a trimmed runtime image in `build/packaging/runtime` via `jlink`.
+  3. `packageAppImage` & `packagePortableZip`: invokes `jpackage --type app-image` (setting `-Dfile.encoding=UTF-8`, `--enable-native-access=ALL-UNNAMED`, and `packaging/windows/icon.ico`) and zips the resulting folder into `build/installer/TidyFlow-<version>-portable.zip`.
+  4. `packageInstallerExe`: checks for WiX Toolset (`candle.exe` + `light.exe` for WiX v3, or `wix.exe` on JDK 24+). When present, invokes `jpackage --type exe` with `--win-per-user-install`, `--win-menu`, `--win-shortcut`, `--win-dir-chooser`, and the fixed `--win-upgrade-uuid` stored in `gradle.properties` (`tidyflowUpgradeUuid`) so future versions upgrade in place. When WiX is absent locally (and `-PrequireWix=true` is not set), skips `.exe` creation with a clear warning while keeping the rest of the build green.
+  5. `generateChecksums` & `verifyPackage`: writes `build/installer/SHA256SUMS.txt` and runs `scripts/verify-package.ps1`, which validates artifact sizes and SHA-256 hashes, extracts the portable archive to a temp directory, launches `TidyFlow.exe --self-check --out <temp-file>` via `Start-Process -Wait -PassThru`, and verifies exit code `0` and `RESULT OK`.
+
+### GitHub Actions Workflows (`.github/workflows/`)
+- **`ci.yml`**: Runs on pushes to `main` and pull requests on `windows-latest` with Temurin JDK 21 (`contents: read` permission and ref-based concurrency cancellation), executes `.\gradlew.bat test`, and uploads HTML/XML test reports as artifacts on failure.
+- **`release.yml`**: Triggered on `v*.*.*` tag pushes and manual `workflow_dispatch` dry runs:
+  - **`build` job (`contents: read`)**: On tag pushes, verifies `${GITHUB_REF_NAME#v}` matches `version` in `build.gradle.kts`; ensures WiX Toolset v3 is installed (installing via Chocolatey if needed); runs unit tests; builds `.exe`, `-portable.zip`, and `SHA256SUMS.txt` with `-PrequireWix=true`; runs `scripts/verify-package.ps1 -RequireInstaller`; and uploads the three release files as workflow artifacts.
+  - **`publish` job (`contents: write`, tag pushes only)**: Downloads the verified artifacts and creates the GitHub Release with generated release notes using `gh release create` and the built-in `GITHUB_TOKEN`. Manual runs never trigger `publish`.
+- **`dependabot.yml`**: Schedules weekly dependency update PRs for both `gradle` and `github-actions`.
