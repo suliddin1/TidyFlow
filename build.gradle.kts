@@ -29,7 +29,7 @@ dependencies {
     implementation("org.openjfx:javafx-graphics:$javafxVersion:$javafxPlatform")
     implementation("org.openjfx:javafx-controls:$javafxVersion:$javafxPlatform")
     implementation("org.openjfx:javafx-fxml:$javafxVersion:$javafxPlatform")
-    implementation("org.xerial:sqlite-jdbc:3.47.1.0")
+    implementation("org.xerial:sqlite-jdbc:3.53.4.0")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.18.1")
     runtimeOnly("org.slf4j:slf4j-nop:2.0.16")
 
