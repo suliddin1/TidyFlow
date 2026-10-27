@@ -6,12 +6,13 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WindowsRegistryAutostartServiceTest {
 
     @Test
-    void buildEnableCommandQuotesPathWithSpacesCorrectly() {
+    void buildEnableCommandQuotesPathWithSpacesAndAppendsBackgroundFlag() {
         String exePath = "C:\\Program Files\\TidyFlow App\\TidyFlow.exe";
         List<String> cmd = WindowsRegistryAutostartService.buildEnableCommand(exePath);
 
@@ -24,9 +25,34 @@ class WindowsRegistryAutostartServiceTest {
                 "/t",
                 "REG_SZ",
                 "/d",
-                "\"C:\\Program Files\\TidyFlow App\\TidyFlow.exe\"",
+                "\"C:\\Program Files\\TidyFlow App\\TidyFlow.exe\" --background",
                 "/f"
         ), cmd);
+    }
+
+    @Test
+    void formatRegistryValueDataPreservesAlreadyQuotedPathsAndEndsWithBackground() {
+        String alreadyQuoted = "\"C:\\Users\\Alice Smith\\AppData\\Local\\Programs\\TidyFlow\\TidyFlow.exe\"";
+        String value = WindowsRegistryAutostartService.formatRegistryValueData(alreadyQuoted);
+
+        assertEquals("\"C:\\Users\\Alice Smith\\AppData\\Local\\Programs\\TidyFlow\\TidyFlow.exe\" --background", value);
+        assertTrue(value.endsWith(" --background"));
+    }
+
+    @Test
+    void toWindowsProcessCommandEscapesQuotesForRegExe() {
+        List<String> logical = WindowsRegistryAutostartService.buildEnableCommand(
+                "C:\\Program Files\\TidyFlow App\\TidyFlow.exe"
+        );
+        List<String> encoded = WindowsRegistryAutostartService.toWindowsProcessCommand(logical);
+
+        assertEquals("\\\"C:\\Program Files\\TidyFlow App\\TidyFlow.exe\\\" --background", encoded.get(8));
+        assertTrue(encoded.get(8).endsWith(" --background"));
+    }
+
+    @Test
+    void buildEnableCommandRejectsBlankPath() {
+        assertThrows(IllegalArgumentException.class, () -> WindowsRegistryAutostartService.buildEnableCommand("   "));
     }
 
     @Test

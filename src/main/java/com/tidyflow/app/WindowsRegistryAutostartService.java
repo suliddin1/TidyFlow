@@ -39,7 +39,7 @@ public class WindowsRegistryAutostartService implements AutostartService {
             return;
         }
         String appPath = appPathSupplier.get().trim();
-        List<String> command = enabled ? buildEnableCommand(appPath) : buildDisableCommand();
+        List<String> command = enabled ? toWindowsProcessCommand(buildEnableCommand(appPath)) : buildDisableCommand();
 
         Process process = new ProcessBuilder(command)
                 .redirectErrorStream(true)
@@ -61,9 +61,9 @@ public class WindowsRegistryAutostartService implements AutostartService {
     }
 
     /**
-     * Pure command builder for adding the HKCU Run value with proper quoting for paths containing spaces.
+     * Pure helper that formats the HKCU Run value data as the quoted launcher path followed by --background.
      */
-    public static List<String> buildEnableCommand(String appPath) {
+    public static String formatRegistryValueData(String appPath) {
         if (appPath == null || appPath.isBlank()) {
             throw new IllegalArgumentException("appPath must not be blank");
         }
@@ -71,6 +71,14 @@ public class WindowsRegistryAutostartService implements AutostartService {
         String quoted = (trimmed.startsWith("\"") && trimmed.endsWith("\""))
                 ? trimmed
                 : "\"" + trimmed + "\"";
+        return quoted + " --background";
+    }
+
+    /**
+     * Pure command builder for adding the HKCU Run value with proper quoting for paths containing spaces.
+     */
+    public static List<String> buildEnableCommand(String appPath) {
+        String valueData = formatRegistryValueData(appPath);
 
         return List.of(
                 "reg.exe",
@@ -81,9 +89,23 @@ public class WindowsRegistryAutostartService implements AutostartService {
                 "/t",
                 "REG_SZ",
                 "/d",
-                quoted,
+                valueData,
                 "/f"
         );
+    }
+
+    /**
+     * Escapes embedded double quotes for Windows ProcessBuilder (allowAmbiguousCommands=true by default)
+     * so reg.exe receives literal quotes around launcher paths containing spaces.
+     */
+    static List<String> toWindowsProcessCommand(List<String> command) {
+        boolean strictMode = "false".equalsIgnoreCase(System.getProperty("jdk.lang.Process.allowAmbiguousCommands"));
+        if (strictMode) {
+            return command;
+        }
+        return command.stream()
+                .map(arg -> arg.contains("\"") ? arg.replace("\"", "\\\"") : arg)
+                .toList();
     }
 
     /**
