@@ -49,3 +49,7 @@ out/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Local Media & Video
+promo-video/
+
