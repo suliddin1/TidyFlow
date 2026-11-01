@@ -1,6 +1,9 @@
 package com.tidyflow.data.config;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.tidyflow.core.dedupe.DiskType;
+import com.tidyflow.core.dedupe.FolderExclusionFilter;
+import com.tidyflow.core.dedupe.MinSizePreset;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -8,6 +11,7 @@ import java.util.List;
 
 /**
  * Jackson serialization DTOs for settings.json.
+ * Backward-compatible with version 1 files that lack the duplicate scan fields.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public final class SettingsConfigDocument {
@@ -23,6 +27,11 @@ public final class SettingsConfigDocument {
     private boolean startWithWindows = false;
     private ScheduleDto schedule = new ScheduleDto(false, ScheduleConfig.DEFAULT_TIME_OF_DAY);
     private ThemeMode theme = ThemeMode.SYSTEM;
+    private String dedupeMinSizePreset = MinSizePreset.MB_1.name();
+    private String dedupeDiskType = DiskType.AUTO.name();
+    private List<String> dedupeExcludedFolderNames = null;
+    private List<String> dedupeExcludedPaths = null;
+    private boolean suppressDriveRootWarning = false;
 
     public SettingsConfigDocument() {
     }
@@ -99,6 +108,46 @@ public final class SettingsConfigDocument {
         this.theme = theme;
     }
 
+    public String getDedupeMinSizePreset() {
+        return dedupeMinSizePreset;
+    }
+
+    public void setDedupeMinSizePreset(String dedupeMinSizePreset) {
+        this.dedupeMinSizePreset = dedupeMinSizePreset;
+    }
+
+    public String getDedupeDiskType() {
+        return dedupeDiskType;
+    }
+
+    public void setDedupeDiskType(String dedupeDiskType) {
+        this.dedupeDiskType = dedupeDiskType;
+    }
+
+    public List<String> getDedupeExcludedFolderNames() {
+        return dedupeExcludedFolderNames;
+    }
+
+    public void setDedupeExcludedFolderNames(List<String> dedupeExcludedFolderNames) {
+        this.dedupeExcludedFolderNames = dedupeExcludedFolderNames;
+    }
+
+    public List<String> getDedupeExcludedPaths() {
+        return dedupeExcludedPaths;
+    }
+
+    public void setDedupeExcludedPaths(List<String> dedupeExcludedPaths) {
+        this.dedupeExcludedPaths = dedupeExcludedPaths;
+    }
+
+    public boolean isSuppressDriveRootWarning() {
+        return suppressDriveRootWarning;
+    }
+
+    public void setSuppressDriveRootWarning(boolean suppressDriveRootWarning) {
+        this.suppressDriveRootWarning = suppressDriveRootWarning;
+    }
+
     public static SettingsConfigDocument fromDomain(AppSettings settings) {
         SettingsConfigDocument doc = new SettingsConfigDocument();
         doc.setVersion(CURRENT_VERSION);
@@ -112,6 +161,15 @@ public final class SettingsConfigDocument {
         doc.setStartWithWindows(settings.startWithWindows());
         doc.setSchedule(ScheduleDto.fromDomain(settings.schedule()));
         doc.setTheme(settings.theme() != null ? settings.theme() : ThemeMode.SYSTEM);
+        doc.setDedupeMinSizePreset(settings.dedupeMinSizePreset() != null
+                ? settings.dedupeMinSizePreset().name()
+                : MinSizePreset.MB_1.name());
+        doc.setDedupeDiskType(settings.dedupeDiskType() != null
+                ? settings.dedupeDiskType().name()
+                : DiskType.AUTO.name());
+        doc.setDedupeExcludedFolderNames(settings.dedupeExcludedFolderNames());
+        doc.setDedupeExcludedPaths(settings.dedupeExcludedPaths());
+        doc.setSuppressDriveRootWarning(settings.suppressDriveRootWarning());
         return doc;
     }
 
@@ -126,6 +184,13 @@ public final class SettingsConfigDocument {
         for (WatchedFolderDto dto : watchedFolders) {
             folders.add(dto.toDomain());
         }
+        List<String> excludedNames = dedupeExcludedFolderNames != null
+                ? dedupeExcludedFolderNames
+                : FolderExclusionFilter.DEFAULT_EXCLUDED_NAMES;
+        List<String> excludedPaths = dedupeExcludedPaths != null
+                ? dedupeExcludedPaths
+                : List.of();
+
         return new AppSettings(
                 folders,
                 settleSeconds,
@@ -134,7 +199,12 @@ public final class SettingsConfigDocument {
                 minimizeToTray,
                 startWithWindows,
                 schedule.toDomain(),
-                theme != null ? theme : ThemeMode.SYSTEM
+                theme != null ? theme : ThemeMode.SYSTEM,
+                MinSizePreset.fromString(dedupeMinSizePreset),
+                DiskType.fromString(dedupeDiskType),
+                excludedNames,
+                excludedPaths,
+                suppressDriveRootWarning
         );
     }
 

@@ -209,19 +209,25 @@
                                 <Button fx:id="dedupeChooseFolderButton" text="Choose folder" styleClass="button-secondary" onAction="#onChooseDedupeFolder"/>
                                 <Label fx:id="dedupeFolderPathLabel" text="No folder selected" HBox.hgrow="ALWAYS"/>
                                 <Region HBox.hgrow="ALWAYS"/>
+                                <Button fx:id="dedupeExclusionsButton" text="Exclusions" styleClass="button-secondary" onAction="#onEditDedupeExclusions"/>
                                 <Button fx:id="findDuplicatesButton" text="Find duplicates" styleClass="button-primary" onAction="#onFindDuplicates" disable="true"/>
                                 <Button fx:id="cancelDedupeButton" text="Cancel" styleClass="button-secondary" onAction="#onCancelDedupe" disable="true"/>
                             </HBox>
                             <HBox alignment="CENTER_LEFT" spacing="12.0">
                                 <CheckBox fx:id="dedupeRecursiveCheckBox" text="Include subfolders" selected="true"/>
                                 <Label text="Min size:"/>
-                                <TextField fx:id="dedupeMinSizeField" text="0" prefWidth="65.0"/>
-                                <ComboBox fx:id="dedupeSizeUnitCombo" prefWidth="88.0"/>
+                                <ComboBox fx:id="dedupeMinSizeCombo" prefWidth="105.0"/>
+                                <Label text="Disk:"/>
+                                <ComboBox fx:id="dedupeDiskTypeCombo" prefWidth="95.0"/>
                                 <Label text="Keeper strategy:"/>
                                 <ComboBox fx:id="dedupeStrategyCombo" prefWidth="165.0"/>
                                 <Region HBox.hgrow="ALWAYS"/>
-                                <ProgressBar fx:id="dedupeProgressBar" prefWidth="140.0" progress="0.0" visible="false"/>
+                                <ProgressBar fx:id="dedupeProgressBar" prefWidth="150.0" progress="0.0" visible="false"/>
                                 <Label fx:id="dedupeProgressLabel" text="" styleClass="muted-text"/>
+                            </HBox>
+                            <HBox fx:id="dedupeDetailsBox" alignment="CENTER_LEFT" spacing="14.0" visible="false" managed="false">
+                                <Label fx:id="dedupeWalkSummaryLabel" text="" styleClass="muted-text"/>
+                                <Label fx:id="dedupeCurrentFolderLabel" text="" styleClass="muted-text" HBox.hgrow="ALWAYS"/>
                             </HBox>
                         </VBox>
                     </top>

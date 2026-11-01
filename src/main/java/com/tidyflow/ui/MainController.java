@@ -6,12 +6,16 @@ import com.tidyflow.core.dedupe.DedupeProgress;
 import com.tidyflow.core.dedupe.DedupeRemovalSummary;
 import com.tidyflow.core.dedupe.DedupeScanOptions;
 import com.tidyflow.core.dedupe.DedupeScanResult;
+import com.tidyflow.core.dedupe.DiskType;
+import com.tidyflow.core.dedupe.DriveRootDetector;
 import com.tidyflow.core.dedupe.DuplicateFinder;
 import com.tidyflow.core.dedupe.DuplicateGroup;
 import com.tidyflow.core.dedupe.DuplicateGroupSelection;
 import com.tidyflow.core.dedupe.DuplicateRemover;
 import com.tidyflow.core.dedupe.FileEntry;
+import com.tidyflow.core.dedupe.FolderExclusionFilter;
 import com.tidyflow.core.dedupe.KeeperStrategy;
+import com.tidyflow.core.dedupe.MinSizePreset;
 import com.tidyflow.core.executor.BatchExecutionResult;
 import com.tidyflow.core.executor.FileExecutor;
 import com.tidyflow.core.executor.UndoManager;
@@ -202,7 +206,13 @@ public class MainController {
     @FXML
     private Label dedupeFolderPathLabel;
     @FXML
+    private Button dedupeExclusionsButton;
+    @FXML
     private CheckBox dedupeRecursiveCheckBox;
+    @FXML
+    private ComboBox<MinSizePreset> dedupeMinSizeCombo;
+    @FXML
+    private ComboBox<DiskType> dedupeDiskTypeCombo;
     @FXML
     private TextField dedupeMinSizeField;
     @FXML
@@ -217,6 +227,12 @@ public class MainController {
     private ProgressBar dedupeProgressBar;
     @FXML
     private Label dedupeProgressLabel;
+    @FXML
+    private HBox dedupeDetailsBox;
+    @FXML
+    private Label dedupeWalkSummaryLabel;
+    @FXML
+    private Label dedupeCurrentFolderLabel;
     @FXML
     private TreeTableView<DedupeTreeRow> dedupeTreeTable;
     @FXML
@@ -380,6 +396,7 @@ public class MainController {
     private Runnable showWindowCallback;
     private volatile AppSettings currentSettings = AppSettings.defaults();
     private boolean updatingThemeCombo = false;
+    private boolean updatingDedupeCombos = false;
 
     private Path selectedFolder;
     private Path selectedDedupeFolder;
@@ -787,8 +804,40 @@ public class MainController {
     }
 
     private void initDuplicatesTab() {
-        dedupeSizeUnitCombo.setItems(FXCollections.observableArrayList("KB", "MB"));
-        dedupeSizeUnitCombo.getSelectionModel().select("KB");
+        if (dedupeMinSizeCombo != null) {
+            dedupeMinSizeCombo.setItems(FXCollections.observableArrayList(MinSizePreset.values()));
+            dedupeMinSizeCombo.getSelectionModel().select(MinSizePreset.MB_1);
+            dedupeMinSizeCombo.valueProperty().addListener((obs, oldPreset, newPreset) -> {
+                if (!updatingDedupeCombos && newPreset != null) {
+                    persistDedupePreferencesAsync(
+                            newPreset,
+                            currentSettings.dedupeDiskType(),
+                            currentSettings.dedupeExcludedFolderNames(),
+                            currentSettings.dedupeExcludedPaths(),
+                            currentSettings.suppressDriveRootWarning()
+                    );
+                }
+            });
+        }
+        if (dedupeDiskTypeCombo != null) {
+            dedupeDiskTypeCombo.setItems(FXCollections.observableArrayList(DiskType.values()));
+            dedupeDiskTypeCombo.getSelectionModel().select(DiskType.AUTO);
+            dedupeDiskTypeCombo.valueProperty().addListener((obs, oldDisk, newDisk) -> {
+                if (!updatingDedupeCombos && newDisk != null) {
+                    persistDedupePreferencesAsync(
+                            currentSettings.dedupeMinSizePreset(),
+                            newDisk,
+                            currentSettings.dedupeExcludedFolderNames(),
+                            currentSettings.dedupeExcludedPaths(),
+                            currentSettings.suppressDriveRootWarning()
+                    );
+                }
+            });
+        }
+        if (dedupeSizeUnitCombo != null) {
+            dedupeSizeUnitCombo.setItems(FXCollections.observableArrayList("KB", "MB"));
+            dedupeSizeUnitCombo.getSelectionModel().select("KB");
+        }
 
         dedupeStrategyCombo.setItems(FXCollections.observableArrayList(KeeperStrategy.values()));
         dedupeStrategyCombo.getSelectionModel().select(KeeperStrategy.OLDEST_MODIFIED);
@@ -1379,6 +1428,15 @@ public class MainController {
         }
         ThemeManager.applyTheme(settings.theme());
 
+        updatingDedupeCombos = true;
+        if (dedupeMinSizeCombo != null) {
+            dedupeMinSizeCombo.setValue(settings.dedupeMinSizePreset());
+        }
+        if (dedupeDiskTypeCombo != null) {
+            dedupeDiskTypeCombo.setValue(settings.dedupeDiskType());
+        }
+        updatingDedupeCombos = false;
+
         if (automationPipeline != null) {
             automationPipeline.setMassMoveGuardThreshold(settings.massMoveGuardThreshold());
         }
@@ -1416,7 +1474,12 @@ public class MainController {
                 currentSettings.minimizeToTray(),
                 currentSettings.startWithWindows(),
                 currentSettings.schedule(),
-                newTheme
+                newTheme,
+                currentSettings.dedupeMinSizePreset(),
+                currentSettings.dedupeDiskType(),
+                currentSettings.dedupeExcludedFolderNames(),
+                currentSettings.dedupeExcludedPaths(),
+                currentSettings.suppressDriveRootWarning()
         );
         this.currentSettings = updated;
         ThemeManager.applyTheme(newTheme);
@@ -1493,7 +1556,12 @@ public class MainController {
                 currentSettings.minimizeToTray(),
                 currentSettings.startWithWindows(),
                 currentSettings.schedule(),
-                currentSettings.theme()
+                currentSettings.theme(),
+                currentSettings.dedupeMinSizePreset(),
+                currentSettings.dedupeDiskType(),
+                currentSettings.dedupeExcludedFolderNames(),
+                currentSettings.dedupeExcludedPaths(),
+                currentSettings.suppressDriveRootWarning()
         );
         validateAndPersistSettingsAsync(candidate, selectIndex);
     }
@@ -1515,7 +1583,12 @@ public class MainController {
                 minimizeToTrayCheckBox.isSelected(),
                 startWithWindowsCheckBox.isSelected() && autostartService.isAvailable(),
                 new ScheduleConfig(scheduleEnabledCheckBox.isSelected(), scheduleTime),
-                selectedTheme
+                selectedTheme,
+                currentSettings.dedupeMinSizePreset(),
+                currentSettings.dedupeDiskType(),
+                currentSettings.dedupeExcludedFolderNames(),
+                currentSettings.dedupeExcludedPaths(),
+                currentSettings.suppressDriveRootWarning()
         );
         validateAndPersistSettingsAsync(candidate, watchedFoldersTable.getSelectionModel().getSelectedIndex());
     }
@@ -1775,7 +1848,110 @@ public class MainController {
     }
 
     @FXML
+    private void onEditDedupeExclusions() {
+        Window owner = dedupeExclusionsButton != null && dedupeExclusionsButton.getScene() != null
+                ? dedupeExclusionsButton.getScene().getWindow()
+                : null;
+        ExclusionsDialog dialog = new ExclusionsDialog(currentSettings.dedupeExclusionFilter());
+        Optional<FolderExclusionFilter> result = dialog.showAndWait(owner);
+        if (result.isPresent()) {
+            FolderExclusionFilter updatedFilter = result.get();
+            persistDedupePreferencesAsync(
+                    currentSettings.dedupeMinSizePreset(),
+                    currentSettings.dedupeDiskType(),
+                    updatedFilter.folderNames(),
+                    updatedFilter.fullPaths(),
+                    currentSettings.suppressDriveRootWarning()
+            );
+            statusLabel.setText(String.format(
+                    "Updated exclusions (%d folder names, %d paths).",
+                    updatedFilter.folderNames().size(),
+                    updatedFilter.fullPaths().size()
+            ));
+        }
+    }
+
+    private void persistDedupePreferencesAsync(
+            MinSizePreset preset,
+            DiskType diskType,
+            List<String> excludedFolderNames,
+            List<String> excludedPaths,
+            boolean suppressDriveRootWarning
+    ) {
+        AppSettings updated = currentSettings.withDedupePreferences(
+                preset,
+                diskType,
+                excludedFolderNames,
+                excludedPaths,
+                suppressDriveRootWarning
+        );
+        this.currentSettings = updated;
+        if (settingsRepository == null) {
+            return;
+        }
+        Thread saveWorker = new Thread(() -> {
+            try {
+                settingsRepository.save(updated);
+            } catch (Exception ignored) {
+                // Best-effort preference persistence
+            }
+        }, "tidyflow-dedupe-prefs-save-thread");
+        saveWorker.setDaemon(true);
+        saveWorker.start();
+    }
+
+    private boolean confirmDriveRootScanIfNeeded(Path folder) {
+        if (!DriveRootDetector.isDriveRoot(folder) || currentSettings.suppressDriveRootWarning()) {
+            return true;
+        }
+
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+        alert.setTitle("Whole-Drive Scan Warning");
+        alert.setHeaderText("Scan whole drive " + folder + "?");
+        CheckBox dontShowAgain = new CheckBox("Don't show again");
+        Label message = new Label(
+                "Scanning a whole drive can take a long time. Tip: scan personal folders such as Documents, "
+                        + "Pictures or Downloads, and keep the minimum size at 1 MB or more."
+        );
+        message.setWrapText(true);
+        message.setPrefWidth(440);
+
+        VBox box = new VBox(12, message, dontShowAgain);
+        alert.getDialogPane().setContent(box);
+
+        ButtonType scanAnywayButton = new ButtonType("Scan anyway", javafx.scene.control.ButtonBar.ButtonData.OK_DONE);
+        ButtonType cancelButton = new ButtonType("Cancel", javafx.scene.control.ButtonBar.ButtonData.CANCEL_CLOSE);
+        alert.getDialogPane().getButtonTypes().setAll(scanAnywayButton, cancelButton);
+        styleAlert(alert);
+
+        Optional<ButtonType> choice = alert.showAndWait();
+        if (choice.isPresent() && choice.get() == scanAnywayButton) {
+            if (dontShowAgain.isSelected()) {
+                persistDedupePreferencesAsync(
+                        currentSettings.dedupeMinSizePreset(),
+                        currentSettings.dedupeDiskType(),
+                        currentSettings.dedupeExcludedFolderNames(),
+                        currentSettings.dedupeExcludedPaths(),
+                        true
+                );
+            }
+            return true;
+        }
+        return false;
+    }
+
+    @FXML
     private void onFindDuplicates() {
+        if (selectedDedupeFolder == null || duplicateFinder == null) {
+            return;
+        }
+        if (!confirmDriveRootScanIfNeeded(selectedDedupeFolder)) {
+            return;
+        }
+        startDedupeScan();
+    }
+
+    private void startDedupeScan() {
         if (selectedDedupeFolder == null || duplicateFinder == null) {
             return;
         }
@@ -1785,15 +1961,35 @@ public class MainController {
         KeeperStrategy strategy = dedupeStrategyCombo.getValue() != null
                 ? dedupeStrategyCombo.getValue()
                 : KeeperStrategy.OLDEST_MODIFIED;
-        DedupeScanOptions options = new DedupeScanOptions(recursive, minSizeBytes, true, strategy);
+        DiskType diskType = dedupeDiskTypeCombo != null && dedupeDiskTypeCombo.getValue() != null
+                ? dedupeDiskTypeCombo.getValue()
+                : currentSettings.dedupeDiskType();
+        FolderExclusionFilter exclusionFilter = currentSettings.dedupeExclusionFilter();
+        DedupeScanOptions options = new DedupeScanOptions(
+                recursive,
+                minSizeBytes,
+                true,
+                strategy,
+                exclusionFilter,
+                diskType
+        );
 
         dedupeCancelRequested.set(false);
         setDedupeControlsScanning(true);
         dedupeProgressBar.setVisible(true);
         dedupeProgressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
         dedupeProgressLabel.setText("Starting scan...");
+        if (dedupeDetailsBox != null) {
+            dedupeDetailsBox.setVisible(true);
+            dedupeDetailsBox.setManaged(true);
+            dedupeWalkSummaryLabel.setText("");
+            dedupeCurrentFolderLabel.setText("");
+        }
 
         currentDedupeTask = new Task<>() {
+            private final java.util.concurrent.atomic.AtomicReference<DedupeProgress> pendingUiProgress =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+
             @Override
             protected DedupeScanResult call() {
                 return duplicateFinder.findDuplicates(
@@ -1805,20 +2001,28 @@ public class MainController {
             }
 
             private void reportProgress(DedupeProgress progress) {
-                Platform.runLater(() -> {
-                    if (progress.totalCount() > 0) {
-                        dedupeProgressBar.setProgress((double) progress.processedCount() / progress.totalCount());
-                        dedupeProgressLabel.setText(String.format(
-                                "%s (%d / %d)",
-                                progress.stageName(),
-                                progress.processedCount(),
-                                progress.totalCount()
-                        ));
-                    } else {
-                        dedupeProgressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
-                        dedupeProgressLabel.setText(progress.stageName());
-                    }
-                });
+                if (pendingUiProgress.getAndSet(progress) == null) {
+                    Platform.runLater(() -> {
+                        DedupeProgress latest = pendingUiProgress.getAndSet(null);
+                        if (latest == null) {
+                            return;
+                        }
+                        if (latest.isIndeterminate()) {
+                            dedupeProgressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
+                        } else {
+                            dedupeProgressBar.setProgress(latest.progressFraction());
+                        }
+                        dedupeProgressLabel.setText(latest.formatStatusLine());
+                        if (dedupeDetailsBox != null) {
+                            String walkSummary = latest.formatWalkSummary();
+                            dedupeWalkSummaryLabel.setText(walkSummary);
+                            String folder = latest.currentFolder();
+                            dedupeCurrentFolderLabel.setText(
+                                    folder != null && !folder.isEmpty() ? "Folder: " + folder : ""
+                            );
+                        }
+                    });
+                }
             }
         };
 
@@ -1827,6 +2031,23 @@ public class MainController {
             setDedupeControlsScanning(false);
             dedupeProgressBar.setVisible(false);
             dedupeProgressLabel.setText("");
+            if (dedupeDetailsBox != null) {
+                if (result.totalScannedFiles() > 0 || result.skippedExcludedCount() > 0 || result.skippedUnreadableCount() > 0) {
+                    dedupeDetailsBox.setVisible(true);
+                    dedupeDetailsBox.setManaged(true);
+                    dedupeWalkSummaryLabel.setText(String.format(
+                            "Scanned %,d files (%s) | Skipped: %,d excluded, %,d unreadable",
+                            result.totalScannedFiles(),
+                            ByteFormatter.format(result.totalScannedBytes()),
+                            result.skippedExcludedCount(),
+                            result.skippedUnreadableCount()
+                    ));
+                    dedupeCurrentFolderLabel.setText("");
+                } else {
+                    dedupeDetailsBox.setVisible(false);
+                    dedupeDetailsBox.setManaged(false);
+                }
+            }
             populateDedupeTree(result.groups());
             statusLabel.setText(String.format(
                     "Found %d duplicate group(s) (%d duplicate files, %s wasted).",
@@ -1839,7 +2060,10 @@ public class MainController {
         currentDedupeTask.setOnCancelled(event -> {
             setDedupeControlsScanning(false);
             dedupeProgressBar.setVisible(false);
-            dedupeProgressLabel.setText("Scan cancelled");
+            dedupeProgressLabel.setText("Scan cancelled (cached hashes saved)");
+            if (dedupeCurrentFolderLabel != null) {
+                dedupeCurrentFolderLabel.setText("");
+            }
             statusLabel.setText("Duplicate scan cancelled.");
         });
 
@@ -1848,7 +2072,10 @@ public class MainController {
             dedupeProgressBar.setVisible(false);
             Throwable ex = currentDedupeTask.getException();
             if (ex instanceof CancellationException) {
-                dedupeProgressLabel.setText("Scan cancelled");
+                dedupeProgressLabel.setText("Scan cancelled (cached hashes saved)");
+                if (dedupeCurrentFolderLabel != null) {
+                    dedupeCurrentFolderLabel.setText("");
+                }
                 statusLabel.setText("Duplicate scan cancelled.");
             } else {
                 String msg = ex != null ? ex.getMessage() : "Unknown error";
@@ -1924,11 +2151,7 @@ public class MainController {
             if (!summary.details().isEmpty()) {
                 body += "\n\nDetails:\n" + String.join("\n", summary.details());
             }
-            info.setContentText(body);
-            styleAlert(info);
-            info.showAndWait();
-
-            onFindDuplicates();
+            alertBodyAndRescan(info, body);
         });
 
         removeTask.setOnFailed(event -> {
@@ -2040,21 +2263,47 @@ public class MainController {
         return bytes;
     }
 
+    private void alertBodyAndRescan(Alert info, String body) {
+        info.setContentText(body);
+        styleAlert(info);
+        info.showAndWait();
+        startDedupeScan();
+    }
+
     private long parseMinSizeBytes() {
-        long raw = parseLongOrZero(dedupeMinSizeField.getText());
-        if (raw <= 0L) {
-            return 1L;
+        if (dedupeMinSizeCombo != null && dedupeMinSizeCombo.getValue() != null) {
+            return dedupeMinSizeCombo.getValue().minSizeBytes();
         }
-        String unit = dedupeSizeUnitCombo.getValue();
-        long multiplier = "MB".equalsIgnoreCase(unit) ? 1024L * 1024L : 1024L;
-        return Math.max(1L, raw * multiplier);
+        if (dedupeMinSizeField != null && dedupeSizeUnitCombo != null) {
+            long raw = parseLongOrZero(dedupeMinSizeField.getText());
+            if (raw <= 0L) {
+                return 1L;
+            }
+            String unit = dedupeSizeUnitCombo.getValue();
+            long multiplier = "MB".equalsIgnoreCase(unit) ? 1024L * 1024L : 1024L;
+            return Math.max(1L, raw * multiplier);
+        }
+        return MinSizePreset.MB_1.minSizeBytes();
     }
 
     private void setDedupeControlsScanning(boolean scanning) {
         dedupeChooseFolderButton.setDisable(scanning);
         dedupeRecursiveCheckBox.setDisable(scanning);
-        dedupeMinSizeField.setDisable(scanning);
-        dedupeSizeUnitCombo.setDisable(scanning);
+        if (dedupeExclusionsButton != null) {
+            dedupeExclusionsButton.setDisable(scanning);
+        }
+        if (dedupeMinSizeCombo != null) {
+            dedupeMinSizeCombo.setDisable(scanning);
+        }
+        if (dedupeDiskTypeCombo != null) {
+            dedupeDiskTypeCombo.setDisable(scanning);
+        }
+        if (dedupeMinSizeField != null) {
+            dedupeMinSizeField.setDisable(scanning);
+        }
+        if (dedupeSizeUnitCombo != null) {
+            dedupeSizeUnitCombo.setDisable(scanning);
+        }
         dedupeStrategyCombo.setDisable(scanning);
         findDuplicatesButton.setDisable(scanning || selectedDedupeFolder == null);
         cancelDedupeButton.setDisable(!scanning);
