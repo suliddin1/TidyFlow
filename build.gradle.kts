@@ -131,6 +131,13 @@ fun findWixBinDirectory(jdkFeatureVersion: Int): File? {
     val pathDirs = pathEnv.split(File.pathSeparator).filter { it.isNotBlank() }.map { File(it) }
 
     val standardDirs = mutableListOf<File>()
+    val localAppData = System.getenv("LOCALAPPDATA")
+    if (!localAppData.isNullOrBlank()) {
+        val userWixBin = File(localAppData, "Programs/WiX/bin")
+        if (userWixBin.isDirectory) {
+            standardDirs.add(userWixBin)
+        }
+    }
     listOf("C:\\Program Files (x86)", "C:\\Program Files").forEach { base ->
         val root = File(base)
         if (root.isDirectory) {
@@ -205,6 +212,8 @@ val createRuntimeImage = tasks.register("createRuntimeImage") {
             "java.logging",
             "java.xml",
             "java.scripting",
+            "java.net.http",
+            "jdk.crypto.ec",
             "jdk.unsupported"
         )
         detectedCsv.split(",")
@@ -297,6 +306,7 @@ val packageInstallerExe = tasks.register("packageInstallerExe") {
     val appVersion = project.version.toString()
     val mainJarName = "tidyflow-$appVersion.jar"
     val iconFile = layout.projectDirectory.file("packaging/windows/icon.ico").asFile
+    val resourceDir = layout.projectDirectory.dir("packaging/windows").asFile
     val upgradeUuid = tidyflowUpgradeUuid
     val requireWix = providers.gradleProperty("requireWix").map { it.equals("true", ignoreCase = true) }.getOrElse(false)
 
@@ -336,6 +346,7 @@ val packageInstallerExe = tasks.register("packageInstallerExe") {
                 "--vendor", "TidyFlow",
                 "--description", "Rule-based folder organizer and duplicate finder for Windows",
                 "--icon", iconFile.absolutePath,
+                "--resource-dir", resourceDir.absolutePath,
                 "--input", inputDirProvider.get().asFile.absolutePath,
                 "--main-jar", mainJarName,
                 "--main-class", "com.tidyflow.app.Main",
@@ -428,4 +439,12 @@ tasks.register("packageRelease") {
     group = "distribution"
     description = "Builds the custom jlink runtime, portable ZIP, Windows EXE installer (if WiX is present), SHA256SUMS.txt, and verifies --self-check."
     dependsOn(packagePortableZip, packageInstallerExe, generateChecksums, verifyPackage)
+}
+
+tasks.register<JavaExec>("captureScreenshots") {
+    group = "documentation"
+    description = "Launches TidyFlow in an isolated temp directory and captures PNG screenshots of all tabs into docs/screenshots/."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.tidyflow.app.Main")
+    args("--capture-screenshots", layout.projectDirectory.dir("docs/screenshots").asFile.absolutePath)
 }

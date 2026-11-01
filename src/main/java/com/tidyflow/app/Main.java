@@ -3,7 +3,7 @@ package com.tidyflow.app;
 import javafx.application.Application;
 
 /**
- * Application launcher class. Handles headless --self-check before initializing JavaFX.
+ * Application launcher class. Handles headless --self-check and --cleanup-autostart before initializing JavaFX.
  */
 public final class Main {
 
@@ -21,6 +21,17 @@ public final class Main {
         if (parsed.selfCheck()) {
             int exitCode = SelfCheckRunner.execute(parsed.selfCheckOutFile().orElse(null));
             System.exit(exitCode);
+            return;
+        }
+
+        if (parsed.cleanupAutostart()) {
+            try {
+                WindowsRegistryAutostartService.removeRegistryEntry();
+                System.exit(0);
+            } catch (Exception e) {
+                System.err.println("[TidyFlow] Failed to clean up autostart registry entry: " + e.getMessage());
+                System.exit(1);
+            }
             return;
         }
 

@@ -79,6 +79,23 @@ class AppArgumentsTest {
 
         AppArguments conflicting = AppArguments.parse("--background", "--self-check");
         assertFalse(conflicting.isValid());
+
+        AppArguments conflictingCleanup = AppArguments.parse("--cleanup-autostart", "--background");
+        assertFalse(conflictingCleanup.isValid());
+    }
+
+    @Test
+    void parsesCleanupAutostartAndCaptureScreenshotsFlags() {
+        AppArguments cleanup = AppArguments.parse("--cleanup-autostart");
+        assertTrue(cleanup.isValid());
+        assertTrue(cleanup.cleanupAutostart());
+
+        AppArguments screenshots = AppArguments.parse("--capture-screenshots", "docs/screenshots");
+        assertTrue(screenshots.isValid());
+        assertEquals(Path.of("docs/screenshots"), screenshots.captureScreenshotsDir().orElseThrow());
+
+        AppArguments missingScreenshotsDir = AppArguments.parse("--capture-screenshots");
+        assertFalse(missingScreenshotsDir.isValid());
     }
 
     @Test

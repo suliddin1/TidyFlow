@@ -61,6 +61,25 @@ public class WindowsRegistryAutostartService implements AutostartService {
     }
 
     /**
+     * Removes the TidyFlow HKCU Run value unconditionally (used by --cleanup-autostart).
+     */
+    public static void removeRegistryEntry() throws IOException {
+        Process process = new ProcessBuilder(buildDisableCommand())
+                .redirectErrorStream(true)
+                .start();
+        try {
+            boolean finished = process.waitFor(5, TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                throw new IOException("reg.exe timed out while removing Windows startup entry");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted while removing Windows startup entry", e);
+        }
+    }
+
+    /**
      * Pure helper that formats the HKCU Run value data as the quoted launcher path followed by --background.
      */
     public static String formatRegistryValueData(String appPath) {

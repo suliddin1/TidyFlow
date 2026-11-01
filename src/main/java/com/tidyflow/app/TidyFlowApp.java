@@ -21,6 +21,7 @@ import com.tidyflow.data.config.RuleRepository;
 import com.tidyflow.data.config.SettingsRepository;
 import com.tidyflow.data.config.ThemeMode;
 import com.tidyflow.ui.MainController;
+import com.tidyflow.ui.ScreenshotCapturer;
 import com.tidyflow.ui.SystemTrayManager;
 import com.tidyflow.ui.ThemeManager;
 import javafx.application.Application;
@@ -31,6 +32,12 @@ import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.stage.Stage;
 
+import java.io.IOException;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -45,36 +52,60 @@ public class TidyFlowApp extends Application {
     private FolderWatcherService folderWatcherService;
     private DailySchedulerService dailySchedulerService;
     private SystemTrayManager systemTrayManager;
+    private Path tempCaptureDataDir;
 
     @Override
     public void start(Stage primaryStage) throws Exception {
         AppArguments appArgs = AppArguments.parse(getParameters().getRaw().toArray(String[]::new));
+        boolean screenshotMode = appArgs.captureScreenshotsDir().isPresent();
 
-        instanceLock = new SingleInstanceLock();
-        if (!instanceLock.tryAcquire()) {
-            if (!appArgs.background()) {
-                ThemeManager.applyTheme(ThemeMode.SYSTEM);
-                Alert alert = new Alert(Alert.AlertType.INFORMATION);
-                alert.setTitle("TidyFlow");
-                alert.setHeaderText(null);
-                alert.setContentText("TidyFlow is already running (check the system tray)");
-                ThemeManager.styleDialog(alert);
-                alert.showAndWait();
+        if (!screenshotMode) {
+            instanceLock = new SingleInstanceLock();
+            if (!instanceLock.tryAcquire()) {
+                if (!appArgs.background()) {
+                    ThemeManager.applyTheme(ThemeMode.SYSTEM);
+                    Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                    alert.setTitle("TidyFlow");
+                    alert.setHeaderText(null);
+                    alert.setContentText("TidyFlow is already running (check the system tray)");
+                    ThemeManager.styleDialog(alert);
+                    alert.showAndWait();
+                }
+                Platform.exit();
+                return;
             }
-            Platform.exit();
-            return;
+        } else {
+            tempCaptureDataDir = Files.createTempDirectory("tidyflow-screenshots-");
         }
 
-        DatabaseManager dbManager = new DatabaseManager();
+        DatabaseManager dbManager = screenshotMode
+                ? new DatabaseManager(tempCaptureDataDir.resolve("tidyflow.db"))
+                : new DatabaseManager();
         dbManager.migrate();
 
         BatchRepository batchRepository = new BatchRepository(dbManager);
         OperationRepository operationRepository = new OperationRepository(dbManager);
         FileIndexRepository fileIndexRepository = new FileIndexRepository(dbManager);
         StatsRepository statsRepository = new StatsRepository(dbManager);
-        RuleRepository ruleRepository = new RuleRepository();
-        SettingsRepository settingsRepository = new SettingsRepository();
-        AutostartService autostartService = new WindowsRegistryAutostartService();
+        RuleRepository ruleRepository = screenshotMode
+                ? new RuleRepository(tempCaptureDataDir.resolve("rules.json"))
+                : new RuleRepository();
+        SettingsRepository settingsRepository = screenshotMode
+                ? new SettingsRepository(tempCaptureDataDir.resolve("settings.json"))
+                : new SettingsRepository();
+        AutostartService autostartService = screenshotMode
+                ? new WindowsRegistryAutostartService(() -> null)
+                : new WindowsRegistryAutostartService();
+
+        if (screenshotMode) {
+            ScreenshotCapturer.seedDemoData(
+                    tempCaptureDataDir,
+                    dbManager,
+                    batchRepository,
+                    operationRepository,
+                    settingsRepository
+            );
+        }
 
         FolderScanner scanner = new FolderScanner();
         RuleEngine ruleEngine = new RuleEngine(DefaultRules.create());
@@ -149,22 +180,32 @@ public class TidyFlowApp extends Application {
         };
         controller.setShowWindowCallback(showWindowAction);
 
-        systemTrayManager = new SystemTrayManager(
-                showWindowAction,
-                controller::togglePauseFromTray,
-                controller::openOrganizeTab,
-                controller::openOrganizeTabForFolder,
-                controller::openHistoryTab,
-                this::shutdownAndExit,
-                () -> controller.getCurrentSettings().showNotifications()
-        );
-        controller.setSystemTrayManager(systemTrayManager);
-        systemTrayManager.initialize();
+        if (!screenshotMode) {
+            systemTrayManager = new SystemTrayManager(
+                    showWindowAction,
+                    controller::togglePauseFromTray,
+                    controller::openOrganizeTab,
+                    controller::openOrganizeTabForFolder,
+                    controller::openHistoryTab,
+                    this::shutdownAndExit,
+                    () -> controller.getCurrentSettings().showNotifications()
+            );
+            controller.setSystemTrayManager(systemTrayManager);
+            systemTrayManager.initialize();
+
+            if (autostartService.isAvailable()) {
+                try {
+                    autostartService.setEnabled(controller.getCurrentSettings().startWithWindows());
+                } catch (Exception ignored) {
+                }
+            }
+        }
 
         folderWatcherService.start();
 
         primaryStage.setOnCloseRequest(event -> {
-            if (controller.getCurrentSettings().minimizeToTray()
+            if (!screenshotMode
+                    && controller.getCurrentSettings().minimizeToTray()
                     && systemTrayManager != null
                     && systemTrayManager.isSupportedAndInstalled()) {
                 event.consume();
@@ -175,7 +216,7 @@ public class TidyFlowApp extends Application {
             }
         });
 
-        Scene scene = new Scene(root);
+        Scene scene = screenshotMode ? new Scene(root, 1100, 700) : new Scene(root);
         ThemeManager.applyTheme(controller.getCurrentSettings().theme());
         ThemeManager.applyToScene(scene);
         ThemeManager.applyWindowIcons(primaryStage);
@@ -185,9 +226,21 @@ public class TidyFlowApp extends Application {
         primaryStage.setMinHeight(640);
         primaryStage.setScene(scene);
 
+        if (screenshotMode) {
+            primaryStage.show();
+            ScreenshotCapturer.runCaptureSequence(
+                    scene,
+                    controller,
+                    automationPipeline,
+                    appArgs.captureScreenshotsDir().orElseThrow(),
+                    this::shutdownAndExit
+            );
+            return;
+        }
+
         boolean startHidden = AppArguments.shouldStartHidden(
                 appArgs.background(),
-                systemTrayManager.isSupportedAndInstalled(),
+                systemTrayManager != null && systemTrayManager.isSupportedAndInstalled(),
                 controller.getCurrentSettings().minimizeToTray()
         );
         if (!startHidden) {
@@ -221,6 +274,27 @@ public class TidyFlowApp extends Application {
         if (instanceLock != null) {
             instanceLock.close();
             instanceLock = null;
+        }
+        if (tempCaptureDataDir != null) {
+            try {
+                if (Files.exists(tempCaptureDataDir)) {
+                    Files.walkFileTree(tempCaptureDataDir, new SimpleFileVisitor<>() {
+                        @Override
+                        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                            Files.deleteIfExists(file);
+                            return FileVisitResult.CONTINUE;
+                        }
+
+                        @Override
+                        public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+                            Files.deleteIfExists(dir);
+                            return FileVisitResult.CONTINUE;
+                        }
+                    });
+                }
+            } catch (IOException ignored) {
+            }
+            tempCaptureDataDir = null;
         }
     }
 }

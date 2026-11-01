@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <Condition Message="!(loc.OsConditionMessage)">
+      <![CDATA[Installed OR (VersionNT >= $(var.JpExecutableOSVersion))]]>
+    </Condition>
+
+    <!--
+      Automatically remove the HKCU\Software\Microsoft\Windows\CurrentVersion\Run\TidyFlow
+      startup entry on full uninstall (preserved during in-place upgrades).
+    -->
+    <CustomAction
+      Id="JpCleanupAutostartOnUninstall"
+      Directory="INSTALLDIR"
+      ExeCommand="[System64Folder]reg.exe delete &quot;HKCU\Software\Microsoft\Windows\CurrentVersion\Run&quot; /v TidyFlow /f"
+      Execute="deferred"
+      Return="ignore"
+      Impersonate="yes" />
+
+    <InstallExecuteSequence>
+      <Custom Action="JpCleanupAutostartOnUninstall" Before="RemoveFiles">
+        <![CDATA[(REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)]]>
+      </Custom>
+    </InstallExecuteSequence>
+
+    <ComponentGroup Id="FragmentOsCondition"/>
+  </Fragment>
+</Wix>
