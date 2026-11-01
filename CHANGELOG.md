@@ -9,16 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Default folder exclusions (`node_modules`, `.git`, `.gradle`, `venv`, `SteamLibrary`, `$RECYCLE.BIN`, `System Volume Information`, etc.) and an **Exclusions** dialog in the Duplicates tab for custom folder names and full paths.
-- Minimum file size quick presets (`Any`, `100 KB`, `1 MB` default, `10 MB`, `100 MB`) and **Disk** concurrency selector (`Auto`, `SSD`, `HDD`) in the Duplicates tab, persisted in `settings.json`.
+- Minimum file size quick presets (`Any`, `100 KB`, `1 MB` default, `10 MB`, `100 MB`) and **Disk** concurrency selector (`Auto` = 4 threads, `SSD` = 4 threads, `HDD` = 1 sequential thread) in the Duplicates tab, persisted in `settings.json`.
 - Whole-drive scan confirmation dialog with a `"Don't show again"` option when a drive root such as `D:\` is selected.
 - Rich duplicate scan progress feedback (scanned file/byte totals, candidate counts, current folder, `MB/s` throughput, smoothed ETA, and skipped unreadable/excluded counters) throttled to 5 updates per second.
 - Incremental SQLite hash cache persistence (`file_index` flushed in batches every 20 seconds during long scans and on completion/cancellation) so cancelled scans keep their progress.
-- Dev-only `./gradlew benchmark` task for measuring large-scan stages (3-run medians with file and byte counts), `FolderScanner`, `BatchRepository`, buffer sizes, thread scaling, and junction loop safety.
+- Dev-only `./gradlew benchmark` task for measuring large-scan stages (isolated 3-run medians with file and byte counts), `FolderScanner`, `BatchRepository`, buffer sizes, thread scaling, and junction loop safety.
 
 ### Changed
-- Eliminated redundant per-file filesystem and ACL calls during duplicate directory walking and `FolderScanner` by inspecting `DosFileAttributes` directly (200k-file walk median down from `7,646 ms` to `145 ms`; cold scan median down from `15.4 s` to `7,393 ms`; warm scan median down from `10.5 s` to `1,047 ms`).
+- Eliminated redundant per-file filesystem and ACL calls during duplicate directory walking and `FolderScanner` by inspecting `DosFileAttributes` directly (isolated 3-run SSD synthetic medians: 200,305-file walk `7,646 ms` -> `145 ms`; cold scan total `15.4 s` -> `7,393 ms`; warm cache scan `10.5 s` -> `1,047 ms`; 10,000-file `FolderScanner` `143 ms` -> `59 ms`; quick-hash and full-hash stage medians are within run-to-run noise; first scan of newly created/unached files takes ~`296 s` vs. ~`10 s` on repeat scans due to OS cache and antivirus).
 - Reused a single read and full SHA-256 across quick and full hash stages for files `<= 8 KB` so small files are opened at most once, used positioned `FileChannel` reads for `> 8 KB` quick hashing, and reused per-thread `MessageDigest` and 1 MB buffers for path-sorted full hashing.
-- Switched `BatchRepository.createBatchWithOperations` to JDBC batching (`addBatch` / `executeBatch`, 5k ops median down from `122 ms` to `49 ms`).
+- Switched `BatchRepository.createBatchWithOperations` to JDBC batching (`addBatch` / `executeBatch`, 5,000-op 3-run median `122 ms` -> `49 ms`).
 
 ## [1.0.0] - 2026-11-01
 

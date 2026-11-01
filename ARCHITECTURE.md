@@ -110,7 +110,7 @@ RuleEngine (pure dry-run plan for direct child files)
   - For files `<= 8 KB` (`2 * 4 KB`), the head-plus-tail window covers the entire file, so `computeQuickHash` reads the whole file in a single positioned `FileChannel` read (`0..sizeBytes`) and computes its full SHA-256 once.
   - For files `> 8 KB`, `computeQuickHash` hashes the first 4 KB and last 4 KB using a single `FileChannel` with positioned reads (`channel.read(ByteBuffer, position)`).
 - **Stage 3 — Sequential Full SHA-256 & Incremental Cache Persistence**:
-  - Quick-hash-matched candidates (`>= 2` files sharing both size and quick hash) are sorted by path for sequential disk reads across worker threads sized by `DiskType` (`SSD` = 4, `AUTO` = 4, `HDD` = 1).
+  - Quick-hash-matched candidates (`>= 2` files sharing both size and quick hash) are sorted by path for sequential disk reads across worker threads sized by `DiskType` (`DiskType.AUTO` uses up to 4 worker threads capped by `Runtime.getRuntime().availableProcessors()`, matching `DiskType.SSD` = 4 without querying physical drive media type; `DiskType.HDD` uses 1 sequential thread).
   - Files `<= 8 KB` reuse the full SHA-256 already computed in Stage 2 without opening the file a second time; files `> 8 KB` are hashed with a reusable 1 MB `ThreadLocal<byte[]>` buffer and `ThreadLocal<MessageDigest>`.
   - Cancellation (`BooleanSupplier` + thread interruption) is checked between every 1 MB read so cancelling during a multi-gigabyte file stops in under a second.
   - Newly computed hashes are flushed to `FileIndexRepository.upsertBatch` in batches during long scans (every 20 seconds once at least 500 dirty entries accumulate) and inside a `finally` block on completion or cancellation.
@@ -118,7 +118,9 @@ RuleEngine (pure dry-run plan for direct child files)
   - `ProgressThrottler` limits UI progress callbacks to at most 5 updates per second (`200 ms` interval) while immediately emitting stage transitions and completion events.
   - `SmoothedEtaCalculator` computes an exponentially smoothed throughput (`MB/s`) and estimated time remaining (`ETA`), withholding ETA until at least 3 samples and `600 ms` have elapsed.
 - **Dev-Only Benchmark (`src/benchmark/java/com/tidyflow/benchmark/ScanBenchmark.java`)**:
-  - Isolated in the `benchmark` Gradle source set (not packaged in the app JAR and not run during `./gradlew test`). Run `./gradlew benchmark` to measure synthetic 200k-file duplicate scans, `FolderScanner`, `BatchRepository` batch inserts, buffer sizes, worker thread counts, and stall/junction trees.
+  - Isolated in the `benchmark` Gradle source set (not packaged in the app JAR and not run during `./gradlew test`). Run `./gradlew benchmark` to measure 3-run medians across synthetic 200,305-file (`1,666.9 MB`) duplicate scans, `FolderScanner` (10,000 files), `BatchRepository` batch inserts (5,000 ops), buffer sizes, worker thread counts, and stall/junction trees.
+  - Isolated 3-run medians (`before` vs. `after`): directory walk `7,646 ms` -> `145 ms`; cold scan total `15.4 s` -> `7,393 ms`; warm cache scan `10.5 s` -> `1,047 ms`; `FolderScanner` `143 ms` -> `59 ms`; `BatchRepository` `122 ms` -> `49 ms` (quick-hash `5,114 ms` vs. `4,512 ms` and full-hash `319 ms` vs. `334 ms` are within run-to-run noise).
+  - **First-scan caveat & SSD limitation**: The first scan of files not read recently is much slower than repeated runs because of OS file-cache population and antivirus on-access scanning (`296 s`–`334 s` on the first run of freshly generated files vs. `7.4 s`–`10.4 s` on subsequent cold runs). In addition, the benchmark runs on synthetic files in an SSD temp folder and does not represent mechanical hard-disk (HDD) seek latency.
 
 ## 3. Data Layer (`com.tidyflow.data`, `com.tidyflow.data.config`)
 - **JSON Settings Configuration (`SettingsRepository`, `SettingsConfigDocument`, `SettingsValidator`)**:
