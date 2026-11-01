@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "com.tidyflow"
-version = "1.0.0"
+version = "1.0.1"
 
 repositories {
     mavenCentral()
@@ -21,6 +21,11 @@ val tidyflowUpgradeUuid = providers.gradleProperty("tidyflowUpgradeUuid").get()
 sourceSets {
     create("tools") {
         java.srcDir("src/tools/java")
+    }
+    create("benchmark") {
+        java.srcDir("src/benchmark/java")
+        compileClasspath += sourceSets["main"].output + sourceSets["main"].compileClasspath
+        runtimeClasspath += output + sourceSets["main"].output + sourceSets["main"].runtimeClasspath
     }
 }
 
@@ -57,6 +62,13 @@ tasks.register<JavaExec>("generateIcons") {
     classpath = sourceSets["tools"].runtimeClasspath
     mainClass.set("com.tidyflow.tools.IconGeneratorMain")
     args(project.projectDir.absolutePath)
+}
+
+tasks.register<JavaExec>("benchmark") {
+    group = "verification"
+    description = "Runs the dev-only synthetic large-scan performance benchmark."
+    classpath = sourceSets["benchmark"].runtimeClasspath
+    mainClass.set("com.tidyflow.benchmark.ScanBenchmark")
 }
 
 application {
