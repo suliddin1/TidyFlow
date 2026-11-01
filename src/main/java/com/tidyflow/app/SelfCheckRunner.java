@@ -37,6 +37,7 @@ public final class SelfCheckRunner {
             "javafx.scene.control.TableView",
             "javafx.fxml.FXMLLoader",
             "java.awt.SystemTray",
+            "java.net.http.HttpClient",
             "org.sqlite.JDBC"
     );
 

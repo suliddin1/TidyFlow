@@ -24,6 +24,8 @@ import com.tidyflow.core.rules.RulePriorityManager;
 import com.tidyflow.core.rules.RuleValidator;
 import com.tidyflow.core.scanner.FileItem;
 import com.tidyflow.core.scanner.FolderScanner;
+import com.tidyflow.core.update.UpdateCheckResult;
+import com.tidyflow.core.update.UpdateService;
 import com.tidyflow.core.watcher.ActivityLogEntry;
 import com.tidyflow.core.watcher.AutomationListener;
 import com.tidyflow.core.watcher.AutomationPipeline;
@@ -314,6 +316,10 @@ public class MainController {
     @FXML
     private ComboBox<ThemeMode> themeCombo;
     @FXML
+    private Label updateStatusLabel;
+    @FXML
+    private Button checkUpdatesButton;
+    @FXML
     private Label appVersionLabel;
 
     // History tab controls
@@ -366,6 +372,7 @@ public class MainController {
     private final DailySchedulerService dailySchedulerService;
     private final AutostartService autostartService;
     private final StatsRepository statsRepository;
+    private final UpdateService updateService;
     private final RuleValidator ruleValidator = new RuleValidator();
     private final SettingsValidator settingsValidator = new SettingsValidator();
 
@@ -506,6 +513,44 @@ public class MainController {
             AutostartService autostartService,
             StatsRepository statsRepository
     ) {
+        this(
+                scanner,
+                ruleEngine,
+                executor,
+                batchRepository,
+                operationRepository,
+                undoManager,
+                duplicateFinder,
+                duplicateRemover,
+                ruleRepository,
+                settingsRepository,
+                automationPipeline,
+                folderWatcherService,
+                dailySchedulerService,
+                autostartService,
+                statsRepository,
+                new UpdateService()
+        );
+    }
+
+    public MainController(
+            FolderScanner scanner,
+            RuleEngine ruleEngine,
+            FileExecutor executor,
+            BatchRepository batchRepository,
+            OperationRepository operationRepository,
+            UndoManager undoManager,
+            DuplicateFinder duplicateFinder,
+            DuplicateRemover duplicateRemover,
+            RuleRepository ruleRepository,
+            SettingsRepository settingsRepository,
+            AutomationPipeline automationPipeline,
+            FolderWatcherService folderWatcherService,
+            DailySchedulerService dailySchedulerService,
+            AutostartService autostartService,
+            StatsRepository statsRepository,
+            UpdateService updateService
+    ) {
         this.scanner = scanner;
         this.ruleEngine = ruleEngine;
         this.executor = executor;
@@ -521,6 +566,7 @@ public class MainController {
         this.dailySchedulerService = dailySchedulerService;
         this.autostartService = autostartService != null ? autostartService : new WindowsRegistryAutostartService();
         this.statsRepository = statsRepository;
+        this.updateService = updateService != null ? updateService : new UpdateService();
     }
 
     public void setSystemTrayManager(SystemTrayManager systemTrayManager) {
@@ -2265,6 +2311,204 @@ public class MainController {
             case "DEDUPE" -> "[Dedupe] ";
             default -> "[Organize] ";
         };
+    }
+
+    @FXML
+    private void onCheckForUpdates() {
+        if (checkUpdatesButton != null) {
+            checkUpdatesButton.setDisable(true);
+        }
+        if (updateStatusLabel != null) {
+            updateStatusLabel.setText("Checking for updates...");
+        }
+        statusLabel.setText("Checking GitHub Releases for updates...");
+
+        Task<UpdateCheckResult> task = new Task<>() {
+            @Override
+            protected UpdateCheckResult call() {
+                return updateService.checkForUpdates();
+            }
+        };
+
+        task.setOnSucceeded(e -> {
+            if (checkUpdatesButton != null) {
+                checkUpdatesButton.setDisable(false);
+            }
+            UpdateCheckResult res = task.getValue();
+            if (!res.isSuccess()) {
+                String err = "Update check failed: " + res.errorMessage();
+                if (updateStatusLabel != null) {
+                    updateStatusLabel.setText(err);
+                }
+                statusLabel.setText(err);
+                return;
+            }
+            if (!res.updateAvailable()) {
+                String msg = "Up to date (" + res.currentVersion() + ")";
+                if (updateStatusLabel != null) {
+                    updateStatusLabel.setText(msg);
+                }
+                statusLabel.setText("TidyFlow is up to date (version " + res.currentVersion() + ").");
+                return;
+            }
+
+            if (updateStatusLabel != null) {
+                updateStatusLabel.setText("Update v" + res.latestVersion() + " available");
+            }
+            statusLabel.setText("Update v" + res.latestVersion() + " is available.");
+
+            Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+            confirm.setTitle("Update Available");
+            confirm.setHeaderText("TidyFlow " + res.latestVersion() + " is available (current: " + res.currentVersion() + ")");
+            confirm.setContentText("Would you like to download and verify the update now?");
+            styleAlert(confirm);
+
+            Optional<ButtonType> choice = confirm.showAndWait();
+            if (choice.isPresent() && choice.get() == ButtonType.OK) {
+                downloadAndApplyUpdateAsync(res);
+            }
+        });
+
+        task.setOnFailed(e -> {
+            if (checkUpdatesButton != null) {
+                checkUpdatesButton.setDisable(false);
+            }
+            String err = task.getException() != null ? task.getException().getMessage() : "Unknown error";
+            if (updateStatusLabel != null) {
+                updateStatusLabel.setText("Update check failed");
+            }
+            statusLabel.setText("Update check failed: " + err);
+        });
+
+        Thread worker = new Thread(task, "tidyflow-update-check-thread");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private void downloadAndApplyUpdateAsync(UpdateCheckResult release) {
+        if (checkUpdatesButton != null) {
+            checkUpdatesButton.setDisable(true);
+        }
+        if (updateStatusLabel != null) {
+            updateStatusLabel.setText("Downloading v" + release.latestVersion() + "...");
+        }
+        statusLabel.setText("Downloading and verifying TidyFlow " + release.latestVersion() + "...");
+
+        Path downloadsDir = Path.of(System.getProperty("user.home", "."), "Downloads").toAbsolutePath().normalize();
+        boolean preferInstaller = autostartService.isAvailable();
+
+        Task<Path> downloadTask = new Task<>() {
+            @Override
+            protected Path call() throws Exception {
+                return updateService.downloadAndVerifyUpdate(release, downloadsDir, preferInstaller);
+            }
+        };
+
+        downloadTask.setOnSucceeded(e -> {
+            if (checkUpdatesButton != null) {
+                checkUpdatesButton.setDisable(false);
+            }
+            Path file = downloadTask.getValue();
+            if (updateStatusLabel != null) {
+                updateStatusLabel.setText("Downloaded " + file.getFileName());
+            }
+            statusLabel.setText("Verified update saved to " + file);
+
+            boolean isExe = file.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".exe");
+            Alert done = new Alert(Alert.AlertType.CONFIRMATION);
+            done.setTitle("Update Ready");
+            done.setHeaderText("Verified " + file.getFileName() + " (SHA-256 checked)");
+            done.setContentText(isExe
+                    ? "Saved to:\n" + file + "\n\nLaunch the installer now and close TidyFlow?"
+                    : "Saved to:\n" + file + "\n\nOpen the Downloads folder now?");
+            styleAlert(done);
+
+            Optional<ButtonType> action = done.showAndWait();
+            if (action.isPresent() && action.get() == ButtonType.OK) {
+                try {
+                    if (isExe) {
+                        new ProcessBuilder(file.toString()).start();
+                        Platform.exit();
+                    } else {
+                        new ProcessBuilder("explorer.exe", "/select," + file).start();
+                    }
+                } catch (Exception ex) {
+                    showError("Failed to launch update", ex.getMessage());
+                }
+            }
+        });
+
+        downloadTask.setOnFailed(e -> {
+            if (checkUpdatesButton != null) {
+                checkUpdatesButton.setDisable(false);
+            }
+            String err = downloadTask.getException() != null ? downloadTask.getException().getMessage() : "Download failed";
+            if (updateStatusLabel != null) {
+                updateStatusLabel.setText("Update download failed");
+            }
+            showError("Update Download Failed", err);
+        });
+
+        Thread worker = new Thread(downloadTask, "tidyflow-update-download-thread");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /**
+     * Populates realistic preview/showcase state for automated screenshot capture (--capture-screenshots).
+     */
+    public void populateShowcaseState(Path sampleDownloadsDir, List<DuplicateGroup> sampleDuplicates) {
+        if (sampleDownloadsDir != null) {
+            this.selectedFolder = sampleDownloadsDir;
+            folderPathLabel.setText(sampleDownloadsDir.toString());
+            scanButton.setDisable(false);
+            applyButton.setDisable(false);
+            plannedOperations.setAll(
+                    new PlannedOperation(sampleDownloadsDir.resolve("Q3_Financial_Report.pdf"), sampleDownloadsDir.resolve("Documents\\Q3_Financial_Report.pdf"), "Documents"),
+                    new PlannedOperation(sampleDownloadsDir.resolve("Baku_Skyline_RAW.png"), sampleDownloadsDir.resolve("Images\\Baku_Skyline_RAW.png"), "Images"),
+                    new PlannedOperation(sampleDownloadsDir.resolve("jdk-21.0.5-windows-x64.msi"), sampleDownloadsDir.resolve("Installers\\jdk-21.0.5-windows-x64.msi"), "Installers"),
+                    new PlannedOperation(sampleDownloadsDir.resolve("project-backup-2026.zip"), sampleDownloadsDir.resolve("Archives\\project-backup-2026.zip"), "Archives"),
+                    new PlannedOperation(sampleDownloadsDir.resolve("product-demo-1080p.mp4"), sampleDownloadsDir.resolve("Videos\\product-demo-1080p.mp4"), "Videos")
+            );
+
+            this.selectedDedupeFolder = sampleDownloadsDir;
+            dedupeFolderPathLabel.setText(sampleDownloadsDir.toString());
+            findDuplicatesButton.setDisable(false);
+        }
+        if (sampleDuplicates != null && !sampleDuplicates.isEmpty()) {
+            populateDedupeTree(sampleDuplicates);
+        }
+        if (tryFileNameField != null) {
+            tryFileNameField.setText("invoice_october_2026.pdf");
+            trySizeField.setText("420");
+            evaluateTryItBox();
+        }
+        if (updateStatusLabel != null) {
+            updateStatusLabel.setText("Up to date (" + AppVersion.load() + ")");
+        }
+        watchedFolders.setAll(
+                new WatchedFolderConfig(Path.of("C:\\Users\\Alex\\Downloads"), WatchMode.AUTO, true),
+                new WatchedFolderConfig(Path.of("C:\\Users\\Alex\\Desktop\\Inbox"), WatchMode.ASK, true)
+        );
+        activityItems.setAll(
+                "19:58 [Auto] Organized 5 file(s) in Downloads (batch #6)",
+                "19:42 [Watch] 2 file(s) ready for review in Desktop\\Inbox (ASK mode)",
+                "09:00 [Scheduled] Daily pass organized 4 file(s) in Downloads (batch #3)",
+                "08:30 [Watch] Started watching 2 configured folder(s)"
+        );
+        automationStatusLabel.setText("Watching 2 folders");
+        refreshHistory();
+        refreshDashboard();
+        if (!batches.isEmpty()) {
+            batchesTable.getSelectionModel().select(0);
+        }
+        statusLabel.setText("Ready — watching 2 folders (last organized 4m ago)");
+    }
+
+    public void selectTabByIndex(int index) {
+        if (mainTabPane != null && index >= 0 && index < mainTabPane.getTabs().size()) {
+            mainTabPane.getSelectionModel().select(index);
+        }
     }
 
     @FunctionalInterface

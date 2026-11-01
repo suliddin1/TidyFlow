@@ -216,7 +216,7 @@
                                 <CheckBox fx:id="dedupeRecursiveCheckBox" text="Include subfolders" selected="true"/>
                                 <Label text="Min size:"/>
                                 <TextField fx:id="dedupeMinSizeField" text="0" prefWidth="65.0"/>
-                                <ComboBox fx:id="dedupeSizeUnitCombo" prefWidth="75.0"/>
+                                <ComboBox fx:id="dedupeSizeUnitCombo" prefWidth="88.0"/>
                                 <Label text="Keeper strategy:"/>
                                 <ComboBox fx:id="dedupeStrategyCombo" prefWidth="165.0"/>
                                 <Region HBox.hgrow="ALWAYS"/>
@@ -301,7 +301,7 @@
                                 <TextField fx:id="tryFileNameField" promptText="e.g. photo.jpg" prefWidth="170.0"/>
                                 <Label text="Size:"/>
                                 <TextField fx:id="trySizeField" text="10" prefWidth="65.0"/>
-                                <ComboBox fx:id="trySizeUnitCombo" prefWidth="75.0"/>
+                                <ComboBox fx:id="trySizeUnitCombo" prefWidth="88.0"/>
                                 <Label text="Age (days):"/>
                                 <TextField fx:id="tryAgeDaysField" text="0" prefWidth="55.0"/>
                                 <Label text="Result:"/>
@@ -382,6 +382,9 @@
                                 <Label text="Theme:"/>
                                 <ComboBox fx:id="themeCombo" prefWidth="120.0" onAction="#onThemeChanged"/>
                                 <Region HBox.hgrow="ALWAYS"/>
+                                <Label fx:id="updateStatusLabel" text="" styleClass="muted-text"/>
+                                <Button fx:id="checkUpdatesButton" text="Check for updates"
+                                        styleClass="button-secondary" onAction="#onCheckForUpdates"/>
                                 <Label fx:id="appVersionLabel" text="TidyFlow" styleClass="muted-text"/>
                             </HBox>
                         </VBox>

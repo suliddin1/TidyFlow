@@ -32,4 +32,17 @@ class AppVersionTest {
         String version = AppVersion.load();
         assertFalse(version.isBlank());
     }
+
+    @Test
+    void comparesSemanticVersionsAccurately() {
+        org.junit.jupiter.api.Assertions.assertTrue(AppVersion.isNewerVersion("1.0.0", "1.0.1"));
+        org.junit.jupiter.api.Assertions.assertTrue(AppVersion.isNewerVersion("1.0.0", "v1.1.0"));
+        org.junit.jupiter.api.Assertions.assertTrue(AppVersion.isNewerVersion("1.1.9", "1.2.0"));
+        org.junit.jupiter.api.Assertions.assertTrue(AppVersion.isNewerVersion("dev", "1.0.0"));
+
+        assertFalse(AppVersion.isNewerVersion("1.0.0", "1.0.0"));
+        assertFalse(AppVersion.isNewerVersion("1.0.0", "v1.0.0"));
+        assertFalse(AppVersion.isNewerVersion("1.2.0", "1.1.9"));
+        assertFalse(AppVersion.isNewerVersion("1.0.0", "invalid"));
+    }
 }
