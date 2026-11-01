@@ -85,6 +85,13 @@ Uninstalling TidyFlow **keeps** `%APPDATA%\TidyFlow` so your rules and operation
 ## Restoring Removed Duplicates
 TidyFlow **never deletes files permanently**. Duplicate files removed in the **Duplicates** tab are sent to the **Windows Recycle Bin** (`action_type = TRASH`) and can be restored directly from the Windows Recycle Bin at any time.
 
+## Scanning Large Folders
+When scanning large folders or drives for duplicates:
+- **Start with Personal Folders & 1 MB Minimum Size**: The Duplicates tab defaults to a **1 MB** minimum file size preset (`Any`, `100 KB`, `1 MB`, `10 MB`, `100 MB`) and warns before scanning a whole drive root (such as `D:\`). Scanning targeted folders (`Documents`, `Pictures`, `Videos`, `Downloads`) with `1 MB` or `10 MB` avoids inspecting hundreds of thousands of tiny application files.
+- **Folder Exclusions**: TidyFlow automatically skips common developer, package, game, and system folders (`node_modules`, `.git`, `.svn`, `.hg`, `.gradle`, `.idea`, `.m2`, `__pycache__`, `venv`, `.venv`, `site-packages`, `steamapps`, `SteamLibrary`, `$RECYCLE.BIN`, `System Volume Information`) without entering them. Click **Exclusions** in the Duplicates tab to add or remove folder names or full paths.
+- **Disk Type Concurrency**: Select **Auto** (2 threads), **SSD** (4 threads), or **HDD** (1 sequential thread) in the Duplicates tab to match your storage drive.
+- **Incremental Cache & Fast Cancel**: Computed hashes are saved incrementally to SQLite (`file_index`) every 500 files or 20 seconds (and whenever you click **Cancel**), so re-running a cancelled scan reuses all completed hashes immediately.
+
 ## Example `settings.json`
 ```json
 {

@@ -100,6 +100,24 @@ RuleEngine (pure dry-run plan for direct child files)
 - **`ByteFormatter`**: Formats byte counts (`B`, `KB`, `MB`, `GB`, `TB`) using 1024-base units with one decimal place (`0 B`, `1.5 MB`, `3.2 GB`).
 - **`DailyBucketer`**: Converts UTC `Instant` timestamps to local calendar dates (`LocalDate`) or months (`YearMonth`) using an injectable `ZoneId` so operations near local midnight are bucketed accurately, and fills missing days/months in a range with zero counts.
 
+### Large-Scan Duplicate Pipeline (`com.tidyflow.core.dedupe`)
+- **Stage 1 — Single-Stat Walk & Folder Exclusions (`DuplicateFinder`, `FolderExclusionFilter`, `DriveRootDetector`)**:
+  - Walks the normalized root directory via `Files.walkFileTree` without following symbolic links or NTFS junctions (`attrs.isSymbolicLink() || attrs.isOther()`).
+  - Evaluates `FolderExclusionFilter` in `preVisitDirectory` (`FileVisitResult.SKIP_SUBTREE`) so excluded folder names (`node_modules`, `.git`, `.gradle`, `SteamLibrary`, `$RECYCLE.BIN`, `System Volume Information`, etc.) and user-configured full paths are never entered.
+  - Reads size, modification time, regular-file status, and hidden attributes directly from the visitor's `BasicFileAttributes` / `DosFileAttributes` without extra per-file Win32 stat or ACL calls.
+- **Stage 2 — Positioned Quick Hash (`FileHasher.computeQuickHash`)**:
+  - Size-matched candidates `<= 64 KB` bypass quick hashing and go straight to Stage 3 so small files are never opened and read twice.
+  - Candidates `> 64 KB` are sorted by path and hashed over their first 4 KB and last 4 KB using a single `FileChannel` with positioned reads (`channel.read(ByteBuffer, position)`).
+- **Stage 3 — Sequential Full SHA-256 & Incremental Cache Persistence**:
+  - Candidates are sorted by path for sequential disk reads and hashed across worker threads sized by `DiskType` (`SSD` = 4, `AUTO` = 2, `HDD` = 1) using a reusable 1 MB `ThreadLocal<byte[]>` buffer.
+  - Cancellation (`BooleanSupplier` + thread interruption) is checked between every 1 MB read so cancelling during a multi-gigabyte file stops in under a second.
+  - Newly computed hashes are flushed incrementally to `FileIndexRepository.upsertBatch` (SQLite WAL mode) every 500 files or 20 seconds and inside a `finally` block on cancellation.
+- **Progress Throttling & Smoothed ETA (`ProgressThrottler`, `SmoothedEtaCalculator`)**:
+  - `ProgressThrottler` limits UI progress callbacks to at most 5 updates per second (`200 ms` interval) while immediately emitting stage transitions and completion events.
+  - `SmoothedEtaCalculator` computes an exponentially smoothed throughput (`MB/s`) and estimated time remaining (`ETA`), withholding ETA until at least 3 samples and `600 ms` have elapsed.
+- **Dev-Only Benchmark (`src/benchmark/java/com/tidyflow/benchmark/ScanBenchmark.java`)**:
+  - Isolated in the `benchmark` Gradle source set (not packaged in the app JAR and not run during `./gradlew test`). Run `./gradlew benchmark` to measure synthetic 200k-file duplicate scans, `FolderScanner`, `BatchRepository` batch inserts, buffer sizes, worker thread counts, and stall/junction trees.
+
 ## 3. Data Layer (`com.tidyflow.data`, `com.tidyflow.data.config`)
 - **JSON Settings Configuration (`SettingsRepository`, `SettingsConfigDocument`, `SettingsValidator`)**:
   - Stored at `%APPDATA%\TidyFlow\settings.json` (injectable `Path` for tests) with top-level `"version": 1`, including `theme` (`SYSTEM`, `LIGHT`, `DARK`; legacy files without `theme` default to `SYSTEM`).

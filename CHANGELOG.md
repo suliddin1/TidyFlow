@@ -5,6 +5,21 @@ All notable changes to TidyFlow will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - Unreleased
+
+### Added
+- Default folder exclusions (`node_modules`, `.git`, `.gradle`, `venv`, `SteamLibrary`, `$RECYCLE.BIN`, `System Volume Information`, etc.) and an **Exclusions** dialog in the Duplicates tab for custom folder names and full paths.
+- Minimum file size quick presets (`Any`, `100 KB`, `1 MB` default, `10 MB`, `100 MB`) and **Disk** concurrency selector (`Auto`, `SSD`, `HDD`) in the Duplicates tab, persisted in `settings.json`.
+- Whole-drive scan confirmation dialog with a `"Don't show again"` option when a drive root such as `D:\` is selected.
+- Rich duplicate scan progress feedback (scanned file/byte totals, candidate counts, current folder, `MB/s` throughput, smoothed ETA, and skipped unreadable/excluded counters) throttled to 5 updates per second.
+- Incremental SQLite hash cache persistence (`file_index` flushed every 500 files or 20 seconds and on cancellation) so cancelled scans keep their progress.
+- Dev-only `./gradlew benchmark` task for measuring large-scan stages, `FolderScanner`, `BatchRepository`, buffer sizes, thread scaling, and junction loop safety.
+
+### Changed
+- Eliminated redundant per-file filesystem and ACL calls during duplicate directory walking and `FolderScanner` by inspecting `DosFileAttributes` directly.
+- Routed size-matched files `<= 64 KB` directly to full SHA-256 hashing, used positioned `FileChannel` reads for quick hashing, and used path-sorted 1 MB per-thread buffers for full hashing.
+- Switched `BatchRepository.createBatchWithOperations` to JDBC batching (`addBatch` / `executeBatch`).
+
 ## [1.0.0] - 2026-11-01
 
 ### Added
