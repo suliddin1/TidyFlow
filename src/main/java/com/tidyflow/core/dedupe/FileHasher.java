@@ -15,63 +15,74 @@ import java.util.function.BooleanSupplier;
 import java.util.function.LongConsumer;
 
 /**
- * Computes partial (quick 4 KB head + 4 KB tail via positioned FileChannel reads)
- * and full streaming SHA-256 hashes (reusing a 1 MB per-thread buffer).
+ * Computes partial (4 KB head + 4 KB tail via positioned FileChannel reads) and full streaming
+ * SHA-256 hashes, reusing one MessageDigest and one buffer per worker thread.
+ * For files of 8 KB or less, head + tail covers the entire file, so {@link #computeQuickHash}
+ * reads the whole file in a single read and returns its full SHA-256.
  */
 public final class FileHasher {
 
     public static final int QUICK_HASH_CHUNK_BYTES = 4 * 1024;
-    public static final long SMALL_FILE_DIRECT_FULL_HASH_BYTES = 64L * 1024L;
-    public static final int FULL_HASH_BUFFER_BYTES = 1024 * 1024; // 1 MB (winner in Measurement 4)
+    public static final long SMALL_FILE_SINGLE_READ_BYTES = 2L * QUICK_HASH_CHUNK_BYTES; // 8 KB
+    public static final int FULL_HASH_BUFFER_BYTES = 1024 * 1024; // 1 MB
 
     private static final HexFormat HEX = HexFormat.of();
+    private static final ThreadLocal<MessageDigest> THREAD_LOCAL_SHA256 =
+            ThreadLocal.withInitial(FileHasher::createSha256);
+    private static final ThreadLocal<ByteBuffer> QUICK_HASH_BUFFER =
+            ThreadLocal.withInitial(() -> ByteBuffer.allocate((int) SMALL_FILE_SINGLE_READ_BYTES));
     private static final ThreadLocal<byte[]> FULL_HASH_BUFFER =
             ThreadLocal.withInitial(() -> new byte[FULL_HASH_BUFFER_BYTES]);
-    private static final ThreadLocal<ByteBuffer> QUICK_HASH_BUFFER =
-            ThreadLocal.withInitial(() -> ByteBuffer.allocateDirect(QUICK_HASH_CHUNK_BYTES));
 
     private FileHasher() {
     }
 
     /**
-     * Computes SHA-256 of the first 4 KB and the last 4 KB of the file using a single FileChannel
+     * Computes SHA-256 of the file's content if {@code sizeBytes <= 8 KB} (in a single read),
+     * or SHA-256 of the first 4 KB + last 4 KB if {@code sizeBytes > 8 KB} using one FileChannel
      * with positioned reads.
      */
     public static String computeQuickHash(Path path, long sizeBytes, BooleanSupplier isCancelled) throws IOException {
         checkCancelled(isCancelled);
-        MessageDigest digest = newSha256();
+        MessageDigest digest = resetSha256();
         ByteBuffer buffer = QUICK_HASH_BUFFER.get();
 
         try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ)) {
-            buffer.clear();
-            readPositionedUpTo(channel, buffer, 0L);
-            buffer.flip();
-            digest.update(buffer);
+            if (sizeBytes <= SMALL_FILE_SINGLE_READ_BYTES) {
+                int targetBytes = (int) Math.max(0L, sizeBytes);
+                buffer.clear();
+                buffer.limit(targetBytes);
+                readPositionedUpTo(channel, buffer, 0L);
+                digest.update(buffer.array(), 0, buffer.position());
+            } else {
+                buffer.clear();
+                buffer.limit(QUICK_HASH_CHUNK_BYTES);
+                readPositionedUpTo(channel, buffer, 0L);
+                digest.update(buffer.array(), 0, buffer.position());
 
-            checkCancelled(isCancelled);
+                checkCancelled(isCancelled);
 
-            if (sizeBytes > QUICK_HASH_CHUNK_BYTES) {
                 long tailStart = Math.max(QUICK_HASH_CHUNK_BYTES, sizeBytes - QUICK_HASH_CHUNK_BYTES);
                 buffer.clear();
+                buffer.limit(QUICK_HASH_CHUNK_BYTES);
                 readPositionedUpTo(channel, buffer, tailStart);
-                buffer.flip();
-                digest.update(buffer);
+                digest.update(buffer.array(), 0, buffer.position());
             }
         }
         return HEX.formatHex(digest.digest());
     }
 
     /**
-     * Computes the full SHA-256 of a file using a thread-local 1 MB buffer, checking for cancellation
-     * between buffer reads.
+     * Computes the full SHA-256 of a file using a thread-local 1 MB buffer and MessageDigest,
+     * checking for cancellation between buffer reads.
      */
     public static String computeFullSha256(Path path, BooleanSupplier isCancelled) throws IOException {
         return computeFullSha256(path, isCancelled, null);
     }
 
     /**
-     * Computes the full SHA-256 of a file using a thread-local 1 MB buffer, checking for cancellation
-     * and reporting incremental bytes read between buffer reads.
+     * Computes the full SHA-256 of a file using a thread-local 1 MB buffer and MessageDigest,
+     * checking for cancellation and reporting incremental bytes read between buffer reads.
      */
     public static String computeFullSha256(
             Path path,
@@ -79,7 +90,7 @@ public final class FileHasher {
             LongConsumer bytesReadCallback
     ) throws IOException {
         checkCancelled(isCancelled);
-        MessageDigest digest = newSha256();
+        MessageDigest digest = resetSha256();
         byte[] buffer = FULL_HASH_BUFFER.get();
 
         try (InputStream in = Files.newInputStream(path, StandardOpenOption.READ)) {
@@ -113,7 +124,13 @@ public final class FileHasher {
         }
     }
 
-    private static MessageDigest newSha256() {
+    private static MessageDigest resetSha256() {
+        MessageDigest digest = THREAD_LOCAL_SHA256.get();
+        digest.reset();
+        return digest;
+    }
+
+    private static MessageDigest createSha256() {
         try {
             return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {

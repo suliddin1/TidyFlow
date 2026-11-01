@@ -60,7 +60,7 @@ Confirm that the printed `Hash` value (case-insensitive) matches the correspondi
 - **Background Folder Watcher & Daily Scheduler**: Watch folders non-recursively in `ASK` or `AUTO` mode, pause/resume watching at any time, or run an automated pass once a day at a scheduled time (`HH:mm`).
 - **System Tray & Background Startup**: Minimize to the Windows system tray, receive balloon notifications when files are organized or ready for review, and optionally start hidden in the tray with Windows (`--background`) in installed builds.
 - **Safe File Execution**: Moves files in the background, creates missing target directories, renames conflicting files (`name (1).ext`, `name (2).ext`), and blocks modifications inside protected Windows directories (`C:\Windows`, `Program Files`).
-- **Fast Three-Stage Duplicate Finder & Recycle Bin Removal**: Groups files by size, 4 KB head/tail quick hash, and full streaming 64 KB SHA-256 hash in parallel, caching hashes in SQLite (`file_index`) and sending selected duplicates safely to the Windows Recycle Bin.
+- **Fast Three-Stage Duplicate Finder & Recycle Bin Removal**: Groups files by size, 4 KB head/tail quick hash (computing the full SHA-256 in a single read for files `<= 8 KB`), and full streaming 1 MB SHA-256 hash in parallel, caching hashes in SQLite (`file_index`) and sending selected duplicates safely to the Windows Recycle Bin.
 - **SQLite History & Undo**: Browse past batches in the **History** tab and safely undo file moves without overwriting existing files or deleting folders.
 
 ## How Automation Works and Why It Is Safe
@@ -89,8 +89,8 @@ TidyFlow **never deletes files permanently**. Duplicate files removed in the **D
 When scanning large folders or drives for duplicates:
 - **Start with Personal Folders & 1 MB Minimum Size**: The Duplicates tab defaults to a **1 MB** minimum file size preset (`Any`, `100 KB`, `1 MB`, `10 MB`, `100 MB`) and warns before scanning a whole drive root (such as `D:\`). Scanning targeted folders (`Documents`, `Pictures`, `Videos`, `Downloads`) with `1 MB` or `10 MB` avoids inspecting hundreds of thousands of tiny application files.
 - **Folder Exclusions**: TidyFlow automatically skips common developer, package, game, and system folders (`node_modules`, `.git`, `.svn`, `.hg`, `.gradle`, `.idea`, `.m2`, `__pycache__`, `venv`, `.venv`, `site-packages`, `steamapps`, `SteamLibrary`, `$RECYCLE.BIN`, `System Volume Information`) without entering them. Click **Exclusions** in the Duplicates tab to add or remove folder names or full paths.
-- **Disk Type Concurrency**: Select **Auto** (2 threads), **SSD** (4 threads), or **HDD** (1 sequential thread) in the Duplicates tab to match your storage drive.
-- **Incremental Cache & Fast Cancel**: Computed hashes are saved incrementally to SQLite (`file_index`) every 500 files or 20 seconds (and whenever you click **Cancel**), so re-running a cancelled scan reuses all completed hashes immediately.
+- **Disk Type Concurrency**: Select **Auto** (4 threads), **SSD** (4 threads), or **HDD** (1 sequential thread) in the Duplicates tab to match your storage drive.
+- **Incremental Cache & Fast Cancel**: Computed hashes are saved incrementally to SQLite (`file_index`) in batches during long scans (and whenever you click **Cancel**), so re-running a cancelled scan reuses all completed hashes immediately.
 
 ## Example `settings.json`
 ```json

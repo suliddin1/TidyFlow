@@ -33,13 +33,16 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.IntFunction;
+import java.util.function.LongConsumer;
 
 /**
  * Three-stage duplicate file detector:
  * 1) Single-stat directory walk with folder exclusions and size grouping
- * 2) Quick hash (first 4 KB + last 4 KB via positioned FileChannel reads) for files > 64 KB
- * 3) Full streaming SHA-256 (1 MB thread-local buffer, sorted by path) for <= 64 KB size matches
- *    and > 64 KB quick-hash matches, with incremental SQLite cache persistence.
+ * 2) Quick hash (4 KB head + 4 KB tail via positioned FileChannel reads; for files <= 8 KB,
+ *    reads the whole file once and computes its full SHA-256 in that single read)
+ * 3) Full streaming SHA-256 (1 MB thread-local buffer, sorted by path; reuses the Stage 2
+ *    SHA-256 for files <= 8 KB without reopening them).
  */
 public class DuplicateFinder {
 
@@ -49,16 +52,53 @@ public class DuplicateFinder {
     static final Comparator<CandidateFile> CANDIDATE_PATH_COMPARATOR =
             Comparator.comparing(c -> c.path().toString(), String.CASE_INSENSITIVE_ORDER);
 
+    /**
+     * Pluggable hashing strategy (allows tests to count file opens per path).
+     */
+    public interface FileHashStrategy {
+        String computeQuickHash(Path path, long sizeBytes, BooleanSupplier isCancelled) throws IOException;
+
+        String computeFullSha256(
+                Path path,
+                BooleanSupplier isCancelled,
+                LongConsumer bytesReadCallback
+        ) throws IOException;
+
+        static FileHashStrategy defaultStrategy() {
+            return new FileHashStrategy() {
+                @Override
+                public String computeQuickHash(Path path, long sizeBytes, BooleanSupplier isCancelled) throws IOException {
+                    return FileHasher.computeQuickHash(path, sizeBytes, isCancelled);
+                }
+
+                @Override
+                public String computeFullSha256(
+                        Path path,
+                        BooleanSupplier isCancelled,
+                        LongConsumer bytesReadCallback
+                ) throws IOException {
+                    return FileHasher.computeFullSha256(path, isCancelled, bytesReadCallback);
+                }
+            };
+        }
+    }
+
     private final FileIndexRepository fileIndexRepository;
     private final int cacheFlushBatchSize;
     private final long cacheFlushIntervalNanos;
+    private final FileHashStrategy hashStrategy;
 
     public DuplicateFinder() {
         this(null);
     }
 
     public DuplicateFinder(FileIndexRepository fileIndexRepository) {
-        this(fileIndexRepository, DEFAULT_CACHE_FLUSH_BATCH_SIZE, DEFAULT_CACHE_FLUSH_INTERVAL_MILLIS);
+        this(
+                fileIndexRepository,
+                DEFAULT_CACHE_FLUSH_BATCH_SIZE,
+                DEFAULT_CACHE_FLUSH_INTERVAL_MILLIS,
+                FileHashStrategy.defaultStrategy()
+        );
     }
 
     public DuplicateFinder(
@@ -66,9 +106,36 @@ public class DuplicateFinder {
             int cacheFlushBatchSize,
             long cacheFlushIntervalMillis
     ) {
+        this(
+                fileIndexRepository,
+                cacheFlushBatchSize,
+                cacheFlushIntervalMillis,
+                FileHashStrategy.defaultStrategy()
+        );
+    }
+
+    public DuplicateFinder(
+            FileIndexRepository fileIndexRepository,
+            FileHashStrategy hashStrategy
+    ) {
+        this(
+                fileIndexRepository,
+                DEFAULT_CACHE_FLUSH_BATCH_SIZE,
+                DEFAULT_CACHE_FLUSH_INTERVAL_MILLIS,
+                hashStrategy
+        );
+    }
+
+    public DuplicateFinder(
+            FileIndexRepository fileIndexRepository,
+            int cacheFlushBatchSize,
+            long cacheFlushIntervalMillis,
+            FileHashStrategy hashStrategy
+    ) {
         this.fileIndexRepository = fileIndexRepository;
         this.cacheFlushBatchSize = Math.max(1, cacheFlushBatchSize);
-        this.cacheFlushIntervalNanos = TimeUnit.MILLISECONDS.toNanos(Math.max(100L, cacheFlushIntervalMillis));
+        this.cacheFlushIntervalNanos = TimeUnit.MILLISECONDS.toNanos(Math.max(1L, cacheFlushIntervalMillis));
+        this.hashStrategy = Objects.requireNonNull(hashStrategy, "hashStrategy must not be null");
     }
 
     public DedupeScanResult findDuplicates(Path rootFolder, DedupeScanOptions options) {
@@ -128,7 +195,6 @@ public class DuplicateFinder {
         }
 
         List<CandidateFile> stage2Candidates = new ArrayList<>();
-        List<CandidateFile> smallDirectStage3Candidates = new ArrayList<>();
         int totalCandidateFiles = 0;
         long totalCandidateBytes = 0L;
 
@@ -138,18 +204,14 @@ public class DuplicateFinder {
                 long size = entry.getKey();
                 totalCandidateFiles += group.size();
                 totalCandidateBytes += size * group.size();
-                if (size <= FileHasher.SMALL_FILE_DIRECT_FULL_HASH_BYTES) {
-                    smallDirectStage3Candidates.addAll(group);
-                } else {
-                    stage2Candidates.addAll(group);
-                }
+                stage2Candidates.addAll(group);
             }
         }
 
         final int candidateFilesCount = totalCandidateFiles;
         final long candidateBytesTotal = totalCandidateBytes;
 
-        if (stage2Candidates.isEmpty() && smallDirectStage3Candidates.isEmpty()) {
+        if (stage2Candidates.isEmpty()) {
             emitProgress(
                     listener,
                     throttler,
@@ -182,7 +244,6 @@ public class DuplicateFinder {
         }
 
         Map<Path, FileIndexEntry> existingCache = loadCache();
-        Map<Path, FileIndexEntry> stagedEntries = new ConcurrentHashMap<>();
         Map<Path, FileIndexEntry> dirtyCacheEntries = new ConcurrentHashMap<>();
         AtomicLong lastCacheFlushNanos = new AtomicLong(System.nanoTime());
         Object cacheFlushLock = new Object();
@@ -194,58 +255,65 @@ public class DuplicateFinder {
         ExecutorService pool = Executors.newFixedThreadPool(poolSize);
 
         try {
-            List<CandidateFile> stage3Candidates = new ArrayList<>(smallDirectStage3Candidates);
+            // Stage 2: Compute quick hash for size-matched candidates (for <= 8 KB files, this single
+            // read covers the entire file and computes the full SHA-256 at the same time)
+            AtomicInteger stage2Processed = new AtomicInteger(0);
+            AtomicLong stage2BytesProcessed = new AtomicLong(0L);
+            int stage2Total = stage2Candidates.size();
+            long stage2TotalBytes = candidateBytesTotal;
 
-            // Stage 2: Compute quick hash for size-matched candidates > 64 KB
-            if (!stage2Candidates.isEmpty()) {
-                stage2Candidates.sort(CANDIDATE_PATH_COMPARATOR);
-                AtomicInteger stage2Processed = new AtomicInteger(0);
-                AtomicLong stage2BytesProcessed = new AtomicLong(0L);
-                int stage2Total = stage2Candidates.size();
-                long stage2TotalBytes = stage2Candidates.stream().mapToLong(CandidateFile::sizeBytes).sum();
+            emitProgress(
+                    listener,
+                    throttler,
+                    true,
+                    "Quick hashing",
+                    0,
+                    stage2Total,
+                    0L,
+                    stage2TotalBytes,
+                    currentFolder.get(),
+                    scanStartNanos,
+                    0.0,
+                    -1L,
+                    skippedUnreadable.get(),
+                    skippedExcluded.get(),
+                    walkScannedFiles.get(),
+                    walkScannedBytes.get(),
+                    candidateFilesCount,
+                    candidateBytesTotal
+            );
 
-                emitProgress(
-                        listener,
-                        throttler,
-                        true,
-                        "Quick hashing",
-                        0,
-                        stage2Total,
-                        0L,
-                        stage2TotalBytes,
-                        currentFolder.get(),
-                        scanStartNanos,
-                        0.0,
-                        -1L,
-                        skippedUnreadable.get(),
-                        skippedExcluded.get(),
-                        walkScannedFiles.get(),
-                        walkScannedBytes.get(),
-                        candidateFilesCount,
-                        candidateBytesTotal
-                );
-
-                List<Callable<QuickHashedFile>> quickTasks = new ArrayList<>(stage2Total);
-                for (CandidateFile candidate : stage2Candidates) {
-                    quickTasks.add(() -> {
+            List<QuickHashedFile> quickHashedFiles = executeIndexedTasks(
+                    pool,
+                    poolSize,
+                    stage2Total,
+                    cancelled,
+                    idx -> {
+                        CandidateFile candidate = stage2Candidates.get(idx);
                         checkCancelled(cancelled);
-                        Path parent = candidate.path().getParent();
-                        if (parent != null) {
-                            currentFolder.lazySet(parent.toString());
-                        }
+                        boolean isSmallWholeFile = candidate.sizeBytes() <= FileHasher.SMALL_FILE_SINGLE_READ_BYTES;
                         FileIndexEntry cached = existingCache.get(candidate.path());
                         String quickHash;
-                        String cachedSha256 = null;
+                        String fullSha256 = null;
                         boolean newlyHashed = false;
 
                         if (cached != null && cached.matchesMetadata(candidate.sizeBytes(), candidate.mtime())
                                 && cached.quickHash() != null) {
                             quickHash = cached.quickHash();
-                            cachedSha256 = cached.sha256();
+                            fullSha256 = cached.sha256() != null
+                                    ? cached.sha256()
+                                    : (isSmallWholeFile ? quickHash : null);
                             cacheHits.incrementAndGet();
                         } else {
                             try {
-                                quickHash = FileHasher.computeQuickHash(candidate.path(), candidate.sizeBytes(), cancelled);
+                                quickHash = hashStrategy.computeQuickHash(
+                                        candidate.path(),
+                                        candidate.sizeBytes(),
+                                        cancelled
+                                );
+                                if (isSmallWholeFile) {
+                                    fullSha256 = quickHash;
+                                }
                                 filesHashed.incrementAndGet();
                                 newlyHashed = true;
                             } catch (IOException | SecurityException e) {
@@ -254,60 +322,65 @@ public class DuplicateFinder {
                             }
                         }
 
-                        FileIndexEntry entry = FileIndexEntry.unsaved(
-                                candidate.path(),
-                                candidate.sizeBytes(),
-                                candidate.mtime(),
-                                quickHash,
-                                cachedSha256,
-                                now
-                        );
-                        stagedEntries.put(candidate.path(), entry);
                         if (newlyHashed) {
+                            FileIndexEntry entry = FileIndexEntry.unsaved(
+                                    candidate.path(),
+                                    candidate.sizeBytes(),
+                                    candidate.mtime(),
+                                    quickHash,
+                                    fullSha256,
+                                    now
+                            );
                             dirtyCacheEntries.put(candidate.path(), entry);
-                            maybeFlushCache(dirtyCacheEntries, lastCacheFlushNanos, cacheFlushLock, false);
                         }
 
                         int done = stage2Processed.incrementAndGet();
                         long bytesDone = stage2BytesProcessed.addAndGet(candidate.sizeBytes());
-                        emitProgress(
-                                listener,
-                                throttler,
-                                done == stage2Total,
-                                "Quick hashing",
-                                done,
-                                stage2Total,
-                                bytesDone,
-                                stage2TotalBytes,
-                                currentFolder.get(),
-                                scanStartNanos,
-                                0.0,
-                                -1L,
-                                skippedUnreadable.get(),
-                                skippedExcluded.get(),
-                                walkScannedFiles.get(),
-                                walkScannedBytes.get(),
-                                candidateFilesCount,
-                                candidateBytesTotal
-                        );
-                        return new QuickHashedFile(candidate, quickHash);
-                    });
-                }
-
-                List<QuickHashedFile> quickHashedFiles = executeAllTasks(pool, quickTasks, cancelled);
-
-                Map<SizeAndHashKey, List<CandidateFile>> byQuickHash = new LinkedHashMap<>();
-                for (QuickHashedFile qf : quickHashedFiles) {
-                    if (qf != null) {
-                        SizeAndHashKey key = new SizeAndHashKey(qf.candidate().sizeBytes(), qf.quickHash());
-                        byQuickHash.computeIfAbsent(key, k -> new ArrayList<>()).add(qf.candidate());
+                        if (done == stage2Total || stage2Total <= 64 || (done & 63) == 0) {
+                            Path parent = candidate.path().getParent();
+                            if (parent != null) {
+                                currentFolder.lazySet(parent.toString());
+                            }
+                            if (newlyHashed) {
+                                maybeFlushCache(dirtyCacheEntries, lastCacheFlushNanos, cacheFlushLock, false);
+                            }
+                            emitProgress(
+                                    listener,
+                                    throttler,
+                                    done == stage2Total,
+                                    "Quick hashing",
+                                    done,
+                                    stage2Total,
+                                    bytesDone,
+                                    stage2TotalBytes,
+                                    currentFolder.get(),
+                                    scanStartNanos,
+                                    0.0,
+                                    -1L,
+                                    skippedUnreadable.get(),
+                                    skippedExcluded.get(),
+                                    walkScannedFiles.get(),
+                                    walkScannedBytes.get(),
+                                    candidateFilesCount,
+                                    candidateBytesTotal
+                            );
+                        }
+                        return new QuickHashedFile(candidate, quickHash, fullSha256, !newlyHashed);
                     }
-                }
+            );
 
-                for (List<CandidateFile> group : byQuickHash.values()) {
-                    if (group.size() >= 2) {
-                        stage3Candidates.addAll(group);
-                    }
+            Map<SizeAndHashKey, List<QuickHashedFile>> byQuickHash = new LinkedHashMap<>();
+            for (QuickHashedFile qf : quickHashedFiles) {
+                if (qf != null) {
+                    SizeAndHashKey key = new SizeAndHashKey(qf.candidate().sizeBytes(), qf.quickHash());
+                    byQuickHash.computeIfAbsent(key, k -> new ArrayList<>()).add(qf);
+                }
+            }
+
+            List<QuickHashedFile> stage3Candidates = new ArrayList<>();
+            for (List<QuickHashedFile> group : byQuickHash.values()) {
+                if (group.size() >= 2) {
+                    stage3Candidates.addAll(group);
                 }
             }
 
@@ -345,12 +418,18 @@ public class DuplicateFinder {
                 );
             }
 
-            // Stage 3: Compute full SHA-256 for candidates sorted by path (sequential disk access)
-            stage3Candidates.sort(CANDIDATE_PATH_COMPARATOR);
+            // Stage 3: Compute full SHA-256 for quick-hash-matched candidates sorted by path.
+            // Small files (<= 8 KB) reuse the full SHA-256 already computed in Stage 2 without a second read.
+            stage3Candidates.sort(Comparator.comparing(
+                    qf -> qf.candidate().path().toString(),
+                    String.CASE_INSENSITIVE_ORDER
+            ));
             AtomicInteger stage3Processed = new AtomicInteger(0);
             AtomicLong stage3BytesProcessed = new AtomicLong(0L);
             int stage3Total = stage3Candidates.size();
-            long stage3TotalBytes = stage3Candidates.stream().mapToLong(CandidateFile::sizeBytes).sum();
+            long stage3TotalBytes = stage3Candidates.stream()
+                    .mapToLong(qf -> qf.candidate().sizeBytes())
+                    .sum();
 
             etaCalculator.start();
             emitProgress(
@@ -374,109 +453,108 @@ public class DuplicateFinder {
                     candidateBytesTotal
             );
 
-            List<Callable<FullHashedFile>> fullTasks = new ArrayList<>(stage3Total);
-            for (CandidateFile candidate : stage3Candidates) {
-                fullTasks.add(() -> {
-                    checkCancelled(cancelled);
-                    Path parent = candidate.path().getParent();
-                    if (parent != null) {
-                        currentFolder.lazySet(parent.toString());
-                    }
-                    FileIndexEntry cached = existingCache.get(candidate.path());
-                    FileIndexEntry staged = stagedEntries.get(candidate.path());
-                    String quickHash = staged != null
-                            ? staged.quickHash()
-                            : (cached != null && cached.matchesMetadata(candidate.sizeBytes(), candidate.mtime())
-                                    ? cached.quickHash()
-                                    : null);
-                    String sha256;
-                    boolean newlyHashed = false;
-
-                    if (cached != null && cached.matchesMetadata(candidate.sizeBytes(), candidate.mtime())
-                            && cached.sha256() != null) {
-                        sha256 = cached.sha256();
-                        cacheHits.incrementAndGet();
-                        stage3BytesProcessed.addAndGet(candidate.sizeBytes());
-                    } else {
-                        try {
-                            sha256 = FileHasher.computeFullSha256(
-                                    candidate.path(),
-                                    cancelled,
-                                    chunkBytes -> {
-                                        long bytesNow = stage3BytesProcessed.addAndGet(chunkBytes);
-                                        if (throttler.shouldEmit("Full SHA-256 hashing", false)) {
-                                            SmoothedEtaCalculator.EtaSnapshot snap =
-                                                    etaCalculator.update(bytesNow, stage3TotalBytes);
-                                            listener.accept(new DedupeProgress(
-                                                    "Full SHA-256 hashing",
-                                                    stage3Processed.get(),
-                                                    stage3Total,
-                                                    bytesNow,
-                                                    stage3TotalBytes,
-                                                    currentFolder.get(),
-                                                    elapsedMillis(scanStartNanos),
-                                                    snap.throughputMbPerSec(),
-                                                    snap.etaSeconds().orElse(-1L),
-                                                    skippedUnreadable.get(),
-                                                    skippedExcluded.get(),
-                                                    walkScannedFiles.get(),
-                                                    walkScannedBytes.get(),
-                                                    candidateFilesCount,
-                                                    candidateBytesTotal
-                                            ));
-                                        }
-                                    }
-                            );
-                            filesHashed.incrementAndGet();
-                            newlyHashed = true;
-                        } catch (IOException | SecurityException e) {
-                            skippedUnreadable.incrementAndGet();
-                            return null;
+            List<FullHashedFile> fullHashedFiles = executeIndexedTasks(
+                    pool,
+                    poolSize,
+                    stage3Total,
+                    cancelled,
+                    idx -> {
+                        QuickHashedFile qf = stage3Candidates.get(idx);
+                        CandidateFile candidate = qf.candidate();
+                        checkCancelled(cancelled);
+                        Path parent = candidate.path().getParent();
+                        if (parent != null) {
+                            currentFolder.lazySet(parent.toString());
                         }
-                    }
 
-                    FileIndexEntry entry = FileIndexEntry.unsaved(
-                            candidate.path(),
-                            candidate.sizeBytes(),
-                            candidate.mtime(),
-                            quickHash,
-                            sha256,
-                            now
-                    );
-                    stagedEntries.put(candidate.path(), entry);
-                    if (newlyHashed) {
-                        dirtyCacheEntries.put(candidate.path(), entry);
-                        maybeFlushCache(dirtyCacheEntries, lastCacheFlushNanos, cacheFlushLock, false);
-                    }
+                        String quickHash = qf.quickHash();
+                        String sha256;
+                        boolean newlyHashed = false;
 
-                    int done = stage3Processed.incrementAndGet();
-                    long bytesDone = stage3BytesProcessed.get();
-                    boolean force = (done == stage3Total);
-                    if (throttler.shouldEmit("Full SHA-256 hashing", force)) {
-                        SmoothedEtaCalculator.EtaSnapshot snap = etaCalculator.update(bytesDone, stage3TotalBytes);
-                        listener.accept(new DedupeProgress(
-                                "Full SHA-256 hashing",
-                                done,
-                                stage3Total,
-                                bytesDone,
-                                stage3TotalBytes,
-                                currentFolder.get(),
-                                elapsedMillis(scanStartNanos),
-                                snap.throughputMbPerSec(),
-                                snap.etaSeconds().orElse(-1L),
-                                skippedUnreadable.get(),
-                                skippedExcluded.get(),
-                                walkScannedFiles.get(),
-                                walkScannedBytes.get(),
-                                candidateFilesCount,
-                                candidateBytesTotal
-                        ));
-                    }
-                    return new FullHashedFile(candidate, sha256);
-                });
-            }
+                        if (qf.precomputedFullSha256() != null) {
+                            // Either <= 8 KB (whole file already hashed in Stage 2) or cached sha256
+                            sha256 = qf.precomputedFullSha256();
+                            if (qf.fromCache()) {
+                                cacheHits.incrementAndGet();
+                            }
+                            stage3BytesProcessed.addAndGet(candidate.sizeBytes());
+                        } else {
+                            try {
+                                sha256 = hashStrategy.computeFullSha256(
+                                        candidate.path(),
+                                        cancelled,
+                                        chunkBytes -> {
+                                            long bytesNow = stage3BytesProcessed.addAndGet(chunkBytes);
+                                            if (throttler.shouldEmit("Full SHA-256 hashing", false)) {
+                                                SmoothedEtaCalculator.EtaSnapshot snap =
+                                                        etaCalculator.update(bytesNow, stage3TotalBytes);
+                                                listener.accept(new DedupeProgress(
+                                                        "Full SHA-256 hashing",
+                                                        stage3Processed.get(),
+                                                        stage3Total,
+                                                        bytesNow,
+                                                        stage3TotalBytes,
+                                                        currentFolder.get(),
+                                                        elapsedMillis(scanStartNanos),
+                                                        snap.throughputMbPerSec(),
+                                                        snap.etaSeconds().orElse(-1L),
+                                                        skippedUnreadable.get(),
+                                                        skippedExcluded.get(),
+                                                        walkScannedFiles.get(),
+                                                        walkScannedBytes.get(),
+                                                        candidateFilesCount,
+                                                        candidateBytesTotal
+                                                ));
+                                            }
+                                        }
+                                );
+                                filesHashed.incrementAndGet();
+                                newlyHashed = true;
+                            } catch (IOException | SecurityException e) {
+                                skippedUnreadable.incrementAndGet();
+                                return null;
+                            }
+                        }
 
-            List<FullHashedFile> fullHashedFiles = executeAllTasks(pool, fullTasks, cancelled);
+                        if (newlyHashed) {
+                            FileIndexEntry entry = FileIndexEntry.unsaved(
+                                    candidate.path(),
+                                    candidate.sizeBytes(),
+                                    candidate.mtime(),
+                                    quickHash,
+                                    sha256,
+                                    now
+                            );
+                            dirtyCacheEntries.put(candidate.path(), entry);
+                            maybeFlushCache(dirtyCacheEntries, lastCacheFlushNanos, cacheFlushLock, false);
+                        }
+
+                        int done = stage3Processed.incrementAndGet();
+                        long bytesDone = stage3BytesProcessed.get();
+                        boolean force = (done == stage3Total);
+                        if (throttler.shouldEmit("Full SHA-256 hashing", force)) {
+                            SmoothedEtaCalculator.EtaSnapshot snap = etaCalculator.update(bytesDone, stage3TotalBytes);
+                            listener.accept(new DedupeProgress(
+                                    "Full SHA-256 hashing",
+                                    done,
+                                    stage3Total,
+                                    bytesDone,
+                                    stage3TotalBytes,
+                                    currentFolder.get(),
+                                    elapsedMillis(scanStartNanos),
+                                    snap.throughputMbPerSec(),
+                                    snap.etaSeconds().orElse(-1L),
+                                    skippedUnreadable.get(),
+                                    skippedExcluded.get(),
+                                    walkScannedFiles.get(),
+                                    walkScannedBytes.get(),
+                                    candidateFilesCount,
+                                    candidateBytesTotal
+                            ));
+                        }
+                        return new FullHashedFile(candidate, sha256);
+                    }
+            );
             checkCancelled(cancelled);
 
             Map<SizeAndHashKey, List<FileEntry>> byFullHash = new LinkedHashMap<>();
@@ -719,22 +797,45 @@ public class DuplicateFinder {
         return Math.max(0L, (System.nanoTime() - scanStartNanos) / 1_000_000L);
     }
 
-    private <T> List<T> executeAllTasks(
+    /**
+     * Dispatches {@code poolSize} worker loops that pull indices from a shared {@link AtomicInteger}
+     * instead of allocating and queueing one {@link Future} per file.
+     */
+    private <T> List<T> executeIndexedTasks(
             ExecutorService pool,
-            List<Callable<T>> tasks,
-            BooleanSupplier cancelled
+            int poolSize,
+            int totalItems,
+            BooleanSupplier cancelled,
+            IntFunction<T> itemProcessor
     ) {
-        List<Future<T>> futures = new ArrayList<>(tasks.size());
-        for (Callable<T> task : tasks) {
-            checkCancelled(cancelled);
-            futures.add(pool.submit(task));
+        if (totalItems <= 0) {
+            return List.of();
+        }
+        @SuppressWarnings("unchecked")
+        T[] results = (T[]) new Object[totalItems];
+        AtomicInteger nextIndex = new AtomicInteger(0);
+        int workers = Math.min(poolSize, totalItems);
+        List<Future<Void>> futures = new ArrayList<>(workers);
+
+        for (int w = 0; w < workers; w++) {
+            Callable<Void> workerTask = () -> {
+                while (true) {
+                    checkCancelled(cancelled);
+                    int idx = nextIndex.getAndIncrement();
+                    if (idx >= totalItems) {
+                        break;
+                    }
+                    results[idx] = itemProcessor.apply(idx);
+                }
+                return null;
+            };
+            futures.add(pool.submit(workerTask));
         }
 
-        List<T> results = new ArrayList<>(tasks.size());
-        for (Future<T> future : futures) {
+        for (Future<Void> future : futures) {
             checkCancelled(cancelled);
             try {
-                results.add(future.get());
+                future.get();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 cancelRemaining(futures);
@@ -748,7 +849,14 @@ public class DuplicateFinder {
                 throw new RuntimeException("Unexpected error during duplicate hashing", cause);
             }
         }
-        return results;
+
+        List<T> list = new ArrayList<>(totalItems);
+        for (T item : results) {
+            if (item != null) {
+                list.add(item);
+            }
+        }
+        return list;
     }
 
     private static <T> void cancelRemaining(List<Future<T>> futures) {
@@ -779,33 +887,31 @@ public class DuplicateFinder {
         }
         long now = System.nanoTime();
         if (!force
-                && dirtyCacheEntries.size() < cacheFlushBatchSize
-                && (now - lastFlushNanos.get()) < cacheFlushIntervalNanos) {
+                && (dirtyCacheEntries.size() < cacheFlushBatchSize
+                        || (now - lastFlushNanos.get()) < cacheFlushIntervalNanos)) {
             return;
         }
 
-        List<FileIndexEntry> batchToFlush;
         synchronized (flushLock) {
             now = System.nanoTime();
             if (!force
-                    && dirtyCacheEntries.size() < cacheFlushBatchSize
-                    && (now - lastFlushNanos.get()) < cacheFlushIntervalNanos) {
+                    && (dirtyCacheEntries.size() < cacheFlushBatchSize
+                            || (now - lastFlushNanos.get()) < cacheFlushIntervalNanos)) {
                 return;
             }
             if (dirtyCacheEntries.isEmpty()) {
                 return;
             }
-            batchToFlush = new ArrayList<>(dirtyCacheEntries.values());
+            List<FileIndexEntry> batchToFlush = new ArrayList<>(dirtyCacheEntries.values());
             for (FileIndexEntry entry : batchToFlush) {
                 dirtyCacheEntries.remove(entry.path(), entry);
             }
             lastFlushNanos.set(now);
-        }
-
-        try {
-            fileIndexRepository.upsertBatch(batchToFlush);
-        } catch (SQLException ignored) {
-            // Best-effort cache persistence
+            try {
+                fileIndexRepository.upsertBatch(batchToFlush);
+            } catch (SQLException ignored) {
+                // Best-effort cache persistence
+            }
         }
     }
 
@@ -833,7 +939,12 @@ public class DuplicateFinder {
     record CandidateFile(Path path, long sizeBytes, Instant mtime) {
     }
 
-    private record QuickHashedFile(CandidateFile candidate, String quickHash) {
+    private record QuickHashedFile(
+            CandidateFile candidate,
+            String quickHash,
+            String precomputedFullSha256,
+            boolean fromCache
+    ) {
     }
 
     private record FullHashedFile(CandidateFile candidate, String sha256) {

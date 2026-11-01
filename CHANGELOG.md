@@ -12,13 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Minimum file size quick presets (`Any`, `100 KB`, `1 MB` default, `10 MB`, `100 MB`) and **Disk** concurrency selector (`Auto`, `SSD`, `HDD`) in the Duplicates tab, persisted in `settings.json`.
 - Whole-drive scan confirmation dialog with a `"Don't show again"` option when a drive root such as `D:\` is selected.
 - Rich duplicate scan progress feedback (scanned file/byte totals, candidate counts, current folder, `MB/s` throughput, smoothed ETA, and skipped unreadable/excluded counters) throttled to 5 updates per second.
-- Incremental SQLite hash cache persistence (`file_index` flushed every 500 files or 20 seconds and on cancellation) so cancelled scans keep their progress.
-- Dev-only `./gradlew benchmark` task for measuring large-scan stages, `FolderScanner`, `BatchRepository`, buffer sizes, thread scaling, and junction loop safety.
+- Incremental SQLite hash cache persistence (`file_index` flushed in batches every 20 seconds during long scans and on completion/cancellation) so cancelled scans keep their progress.
+- Dev-only `./gradlew benchmark` task for measuring large-scan stages (3-run medians with file and byte counts), `FolderScanner`, `BatchRepository`, buffer sizes, thread scaling, and junction loop safety.
 
 ### Changed
-- Eliminated redundant per-file filesystem and ACL calls during duplicate directory walking and `FolderScanner` by inspecting `DosFileAttributes` directly.
-- Routed size-matched files `<= 64 KB` directly to full SHA-256 hashing, used positioned `FileChannel` reads for quick hashing, and used path-sorted 1 MB per-thread buffers for full hashing.
-- Switched `BatchRepository.createBatchWithOperations` to JDBC batching (`addBatch` / `executeBatch`).
+- Eliminated redundant per-file filesystem and ACL calls during duplicate directory walking and `FolderScanner` by inspecting `DosFileAttributes` directly (200k-file walk median down from `7,646 ms` to `145 ms`; cold scan median down from `15.4 s` to `7,393 ms`; warm scan median down from `10.5 s` to `1,047 ms`).
+- Reused a single read and full SHA-256 across quick and full hash stages for files `<= 8 KB` so small files are opened at most once, used positioned `FileChannel` reads for `> 8 KB` quick hashing, and reused per-thread `MessageDigest` and 1 MB buffers for path-sorted full hashing.
+- Switched `BatchRepository.createBatchWithOperations` to JDBC batching (`addBatch` / `executeBatch`, 5k ops median down from `122 ms` to `49 ms`).
 
 ## [1.0.0] - 2026-11-01
 

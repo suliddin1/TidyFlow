@@ -80,7 +80,6 @@ public class FileIndexRepository {
 
         try (Connection conn = dbManager.openConnection()) {
             try (Statement pragma = conn.createStatement()) {
-                pragma.execute("PRAGMA journal_mode = WAL;");
                 pragma.execute("PRAGMA synchronous = NORMAL;");
             }
             boolean originalAutoCommit = conn.getAutoCommit();

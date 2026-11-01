@@ -105,13 +105,15 @@ RuleEngine (pure dry-run plan for direct child files)
   - Walks the normalized root directory via `Files.walkFileTree` without following symbolic links or NTFS junctions (`attrs.isSymbolicLink() || attrs.isOther()`).
   - Evaluates `FolderExclusionFilter` in `preVisitDirectory` (`FileVisitResult.SKIP_SUBTREE`) so excluded folder names (`node_modules`, `.git`, `.gradle`, `SteamLibrary`, `$RECYCLE.BIN`, `System Volume Information`, etc.) and user-configured full paths are never entered.
   - Reads size, modification time, regular-file status, and hidden attributes directly from the visitor's `BasicFileAttributes` / `DosFileAttributes` without extra per-file Win32 stat or ACL calls.
-- **Stage 2 — Positioned Quick Hash (`FileHasher.computeQuickHash`)**:
-  - Size-matched candidates `<= 64 KB` bypass quick hashing and go straight to Stage 3 so small files are never opened and read twice.
-  - Candidates `> 64 KB` are sorted by path and hashed over their first 4 KB and last 4 KB using a single `FileChannel` with positioned reads (`channel.read(ByteBuffer, position)`).
+- **Stage 2 — Positioned Quick Hash & Single-Read Small Files (`FileHasher.computeQuickHash`)**:
+  - Size-matched candidates (`>= 2` files of identical size) are hashed in parallel across worker threads reusing a `ThreadLocal<MessageDigest>` and `ThreadLocal<ByteBuffer>`.
+  - For files `<= 8 KB` (`2 * 4 KB`), the head-plus-tail window covers the entire file, so `computeQuickHash` reads the whole file in a single positioned `FileChannel` read (`0..sizeBytes`) and computes its full SHA-256 once.
+  - For files `> 8 KB`, `computeQuickHash` hashes the first 4 KB and last 4 KB using a single `FileChannel` with positioned reads (`channel.read(ByteBuffer, position)`).
 - **Stage 3 — Sequential Full SHA-256 & Incremental Cache Persistence**:
-  - Candidates are sorted by path for sequential disk reads and hashed across worker threads sized by `DiskType` (`SSD` = 4, `AUTO` = 2, `HDD` = 1) using a reusable 1 MB `ThreadLocal<byte[]>` buffer.
+  - Quick-hash-matched candidates (`>= 2` files sharing both size and quick hash) are sorted by path for sequential disk reads across worker threads sized by `DiskType` (`SSD` = 4, `AUTO` = 4, `HDD` = 1).
+  - Files `<= 8 KB` reuse the full SHA-256 already computed in Stage 2 without opening the file a second time; files `> 8 KB` are hashed with a reusable 1 MB `ThreadLocal<byte[]>` buffer and `ThreadLocal<MessageDigest>`.
   - Cancellation (`BooleanSupplier` + thread interruption) is checked between every 1 MB read so cancelling during a multi-gigabyte file stops in under a second.
-  - Newly computed hashes are flushed incrementally to `FileIndexRepository.upsertBatch` (SQLite WAL mode) every 500 files or 20 seconds and inside a `finally` block on cancellation.
+  - Newly computed hashes are flushed to `FileIndexRepository.upsertBatch` in batches during long scans (every 20 seconds once at least 500 dirty entries accumulate) and inside a `finally` block on completion or cancellation.
 - **Progress Throttling & Smoothed ETA (`ProgressThrottler`, `SmoothedEtaCalculator`)**:
   - `ProgressThrottler` limits UI progress callbacks to at most 5 updates per second (`200 ms` interval) while immediately emitting stage transitions and completion events.
   - `SmoothedEtaCalculator` computes an exponentially smoothed throughput (`MB/s`) and estimated time remaining (`ETA`), withholding ETA until at least 3 samples and `600 ms` have elapsed.

@@ -140,43 +140,127 @@ class DuplicateFinderTest {
     }
 
     @Test
-    void smallFilesUpTo64KbGoStraightToFullHashStageAndSkipQuickHash() throws Exception {
-        byte[] smallPayload = new byte[16 * 1024]; // 16 KB <= 64 KB
-        for (int i = 0; i < smallPayload.length; i++) {
-            smallPayload[i] = (byte) (i % 251);
-        }
-        Path s1 = Files.write(scanDir.resolve("small_a.bin"), smallPayload);
-        Path s2 = Files.write(scanDir.resolve("small_b.bin"), smallPayload);
+    void smallFilesEightKbOrLessAreOpenedAtMostOnceUsingCountingHasher() throws Exception {
+        java.util.concurrent.ConcurrentHashMap<Path, java.util.concurrent.atomic.AtomicInteger> openCounts =
+                new java.util.concurrent.ConcurrentHashMap<>();
 
-        List<String> stagesSeen = new ArrayList<>();
-        DedupeScanResult result = finder.findDuplicates(
-                scanDir,
-                DedupeScanOptions.defaults(),
-                p -> {
-                    synchronized (stagesSeen) {
-                        if (!stagesSeen.contains(p.stageName())) {
-                            stagesSeen.add(p.stageName());
-                        }
-                    }
-                },
-                () -> false
+        DuplicateFinder.FileHashStrategy countingStrategy = new DuplicateFinder.FileHashStrategy() {
+            @Override
+            public String computeQuickHash(Path path, long sizeBytes, java.util.function.BooleanSupplier isCancelled)
+                    throws java.io.IOException {
+                openCounts.computeIfAbsent(path, k -> new java.util.concurrent.atomic.AtomicInteger()).incrementAndGet();
+                return FileHasher.computeQuickHash(path, sizeBytes, isCancelled);
+            }
+
+            @Override
+            public String computeFullSha256(
+                    Path path,
+                    java.util.function.BooleanSupplier isCancelled,
+                    java.util.function.LongConsumer bytesReadCallback
+            ) throws java.io.IOException {
+                openCounts.computeIfAbsent(path, k -> new java.util.concurrent.atomic.AtomicInteger()).incrementAndGet();
+                return FileHasher.computeFullSha256(path, isCancelled, bytesReadCallback);
+            }
+        };
+
+        DuplicateFinder countingFinder = new DuplicateFinder(
+                indexRepo,
+                DuplicateFinder.DEFAULT_CACHE_FLUSH_BATCH_SIZE,
+                DuplicateFinder.DEFAULT_CACHE_FLUSH_INTERVAL_MILLIS,
+                countingStrategy
         );
 
-        assertEquals(1, result.groupCount());
-        assertEquals(2, result.filesHashed()); // Only 1 full hash per file, no quick hash
-        assertTrue(!stagesSeen.contains("Quick hashing"), "Small files <= 64 KB should skip Quick hashing");
-        assertTrue(stagesSeen.contains("Full SHA-256 hashing"));
+        // 1) Duplicate pair <= 8 KB (exact 8 KB boundary)
+        byte[] dup8k = new byte[8 * 1024];
+        for (int i = 0; i < dup8k.length; i++) {
+            dup8k[i] = (byte) (i % 251);
+        }
+        Path s1 = Files.write(scanDir.resolve("small_dup_a.bin"), dup8k).toAbsolutePath().normalize();
+        Path s2 = Files.write(scanDir.resolve("small_dup_b.bin"), dup8k).toAbsolutePath().normalize();
 
-        FileIndexEntry cached = indexRepo.findByPath(s1).orElseThrow();
-        assertNull(cached.quickHash());
-        assertNotNull(cached.sha256());
-        assertNotNull(indexRepo.findByPath(s2).orElseThrow().sha256());
+        // 2) Same-size non-duplicate pair <= 8 KB (3 KB)
+        byte[] diff3kA = new byte[3 * 1024];
+        byte[] diff3kB = new byte[3 * 1024];
+        diff3kA[100] = 11;
+        diff3kB[100] = 22;
+        Path s3 = Files.write(scanDir.resolve("small_diff_a.bin"), diff3kA).toAbsolutePath().normalize();
+        Path s4 = Files.write(scanDir.resolve("small_diff_b.bin"), diff3kB).toAbsolutePath().normalize();
+
+        // 3) Duplicate pair > 8 KB (16 KB) -> requires quick hash + full hash (2 opens)
+        byte[] dup16k = new byte[16 * 1024];
+        for (int i = 0; i < dup16k.length; i++) {
+            dup16k[i] = (byte) ((i * 7) & 0xFF);
+        }
+        Path m1 = Files.write(scanDir.resolve("med_dup_a.bin"), dup16k).toAbsolutePath().normalize();
+        Path m2 = Files.write(scanDir.resolve("med_dup_b.bin"), dup16k).toAbsolutePath().normalize();
+
+        DedupeScanResult result = countingFinder.findDuplicates(scanDir, DedupeScanOptions.defaults());
+
+        assertEquals(2, result.groupCount());
+        assertEquals(1, openCounts.get(s1).get(), "8 KB duplicate must be opened at most once");
+        assertEquals(1, openCounts.get(s2).get(), "8 KB duplicate must be opened at most once");
+        assertEquals(1, openCounts.get(s3).get(), "3 KB non-duplicate must be opened at most once");
+        assertEquals(1, openCounts.get(s4).get(), "3 KB non-duplicate must be opened at most once");
+        assertEquals(2, openCounts.get(m1).get(), "16 KB duplicate (> 8 KB) should be opened in Stage 2 and Stage 3");
+        assertEquals(2, openCounts.get(m2).get(), "16 KB duplicate (> 8 KB) should be opened in Stage 2 and Stage 3");
+
+        FileIndexEntry cachedS1 = indexRepo.findByPath(s1).orElseThrow();
+        assertNotNull(cachedS1.quickHash());
+        assertEquals(cachedS1.quickHash(), cachedS1.sha256());
+    }
+
+    @Test
+    void producesIdenticalDuplicateResultsAcrossSmallMediumAndLargeFiles() throws Exception {
+        Path subA = Files.createDirectories(scanDir.resolve("subA"));
+        Path subB = Files.createDirectories(scanDir.resolve("subB"));
+
+        // Small duplicates (2 KB) + small same-size non-duplicate
+        byte[] smallDup = new byte[2 * 1024];
+        byte[] smallDecoy = new byte[2 * 1024];
+        for (int i = 0; i < smallDup.length; i++) {
+            smallDup[i] = (byte) (i & 0x7F);
+            smallDecoy[i] = (byte) ((i + 1) & 0x7F);
+        }
+        Files.write(subA.resolve("s_dup1.dat"), smallDup);
+        Files.write(subB.resolve("s_dup2.dat"), smallDup);
+        Files.write(subB.resolve("s_decoy.dat"), smallDecoy);
+
+        // Medium duplicates (128 KB) + decoy with identical 4 KB head/tail but different middle
+        byte[] medDup = new byte[128 * 1024];
+        for (int i = 0; i < medDup.length; i++) {
+            medDup[i] = (byte) ((i * 31) & 0xFF);
+        }
+        byte[] medDecoy = medDup.clone();
+        medDecoy[64 * 1024] ^= 0x55;
+        Files.write(subA.resolve("m_dup1.dat"), medDup);
+        Files.write(subB.resolve("m_dup2.dat"), medDup);
+        Files.write(subB.resolve("m_decoy.dat"), medDecoy);
+
+        // Large duplicates (2 MB) + unique file
+        byte[] largeDup = new byte[2 * 1024 * 1024];
+        for (int i = 0; i < largeDup.length; i += 4096) {
+            largeDup[i] = (byte) ((i >> 12) & 0xFF);
+        }
+        Files.write(subA.resolve("l_dup1.dat"), largeDup);
+        Files.write(subB.resolve("l_dup2.dat"), largeDup);
+        Files.write(subA.resolve("unique.dat"), new byte[9_999]);
+
+        DedupeScanResult result = finder.findDuplicates(scanDir, DedupeScanOptions.defaults());
+
+        assertEquals(3, result.groupCount());
+        assertEquals(3, result.duplicateFileCount());
+        long expectedWasted = (2L * 1024L) + (128L * 1024L) + (2L * 1024L * 1024L);
+        assertEquals(expectedWasted, result.wastedBytes());
+        // Sorted descending by wastedBytes: large (2 MB), medium (128 KB), small (2 KB)
+        assertEquals(2L * 1024L * 1024L, result.groups().get(0).sizeBytes());
+        assertEquals(128L * 1024L, result.groups().get(1).sizeBytes());
+        assertEquals(2L * 1024L, result.groups().get(2).sizeBytes());
     }
 
     @Test
     void incrementalCachePersistenceSavesHashesBeforeCancelAndReusesThemOnNextScan() throws Exception {
         // Use a small batch flush threshold (2 files) and single thread (HDD mode) for deterministic ordering
-        DuplicateFinder incrementalFinder = new DuplicateFinder(indexRepo, 2, 20_000L);
+        DuplicateFinder incrementalFinder = new DuplicateFinder(indexRepo, 2, 1L);
         byte[] payload = new byte[16 * 1024];
         for (int i = 0; i < payload.length; i++) {
             payload[i] = (byte) (i & 0xFF);

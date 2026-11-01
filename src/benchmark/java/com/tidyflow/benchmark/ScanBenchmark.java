@@ -44,10 +44,7 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Dev-only performance benchmark for the duplicate scan and related I/O paths.
  * Not shipped in the application JAR and not part of {@code gradlew test}; run with {@code gradlew benchmark}.
- * Generates synthetic data in a temp folder, prints a results table, and deletes the data afterwards.
- *
- * Note: data is freshly written, so most reads are served from the OS file cache. A temp folder on an SSD
- * cannot reproduce hard-disk seek behavior, so HDD thread counts cannot be decided from these numbers.
+ * Runs 3 iterations for each measurement and reports per-run numbers and the median.
  */
 public final class ScanBenchmark {
 
@@ -57,6 +54,7 @@ public final class ScanBenchmark {
     private static final int MEDIUM_TRIPLES = 100;
     private static final int FLAT_FILES = 10_000;
     private static final int BATCH_OPERATIONS = 5_000;
+    private static final int DEDUPE_RUNS = 3;
     private static final long ONE_GB = 1024L * 1024L * 1024L;
     private static final long MB = 1024L * 1024L;
     private static final long STALL_TIMEOUT_SECONDS = 120;
@@ -90,9 +88,9 @@ public final class ScanBenchmark {
 
         StringBuilder table = new StringBuilder();
         table.append(String.format("%n=== TidyFlow benchmark (%s) ===%n", label));
-        table.append(String.format("%-52s | %s%n", "Measurement", "Result"));
-        table.append("-".repeat(110)).append(System.lineSeparator());
-        results.forEach((k, v) -> table.append(String.format("%-52s | %s%n", k, v)));
+        table.append(String.format("%-56s | %s%n", "Measurement", "Result"));
+        table.append("-".repeat(120)).append(System.lineSeparator());
+        results.forEach((k, v) -> table.append(String.format("%-56s | %s%n", k, v)));
         table.append(System.lineSeparator()).append("Notes:").append(System.lineSeparator());
         for (String note : notes) {
             table.append(" - ").append(note).append(System.lineSeparator());
@@ -105,39 +103,90 @@ public final class ScanBenchmark {
         log("Results written to " + outFile.toAbsolutePath());
     }
 
-    // ---------------------------------------------------------------- 1. Duplicate scan
+    // ---------------------------------------------------------------- 1. Duplicate scan (3 runs, median)
 
     private void benchmarkDuplicateScan(Path root) throws Exception {
         Path data = Files.createDirectories(root.resolve("dedupe"));
         long genStart = System.nanoTime();
-        long smallBytes = generateSmallFiles(data.resolve("small"));
+        SmallGenStats smallStats = generateSmallFiles(data.resolve("small"));
+        long smallBytes = smallStats.totalBytes;
         long mediumBytes = generateMediumFiles(data.resolve("medium"));
         long largeBytes = generateLargeFiles(data.resolve("large"));
+        long totalBytes = smallBytes + mediumBytes + largeBytes;
+        long matchedFullBytes = smallStats.duplicateSmallBytes + mediumBytes + largeBytes;
+
         log(String.format("Generated dedupe data in %.1f s", seconds(System.nanoTime() - genStart)));
-        results.put("1. Test data", String.format("%,d small (%s) + %d medium (%s) + 5 large (%s)",
-                SMALL_FILES, mb(smallBytes), MEDIUM_TRIPLES * 3, mb(mediumBytes), mb(largeBytes)));
+        results.put("1. Test data", String.format(
+                "%,d small (%s) + %d medium (%s) + 5 large (%s) = %,d files (%s)",
+                SMALL_FILES, mb(smallBytes), MEDIUM_TRIPLES * 3, mb(mediumBytes), mb(largeBytes),
+                SMALL_FILES + MEDIUM_TRIPLES * 3 + 5, mb(totalBytes)));
 
-        DatabaseManager db = new DatabaseManager(root.resolve("dedupe-cache.db"));
-        db.migrate();
-        FileIndexRepository cache = new FileIndexRepository(db);
+        ScanTimings[] coldRuns = new ScanTimings[DEDUPE_RUNS];
+        ScanTimings[] warmRuns = new ScanTimings[DEDUPE_RUNS];
 
-        ScanTimings cold = timedScan(new DuplicateFinder(cache), data);
-        results.put("1a. Dedupe scan (cold cache) total", fmtMs(cold.totalNanos)
-                + String.format("  -> %d groups, %d dup files", cold.result.groupCount(), cold.result.duplicateFileCount()));
-        results.put("1b.   directory walk", fmtMs(cold.walkNanos) + pct(cold.walkNanos, cold.totalNanos)
-                + String.format("  (%,d candidates)", cold.walkCount));
-        results.put("1c.   size grouping + cache load", fmtMs(cold.groupNanos) + pct(cold.groupNanos, cold.totalNanos));
-        results.put("1d.   quick hash", fmtMs(cold.quickNanos) + pct(cold.quickNanos, cold.totalNanos)
-                + String.format("  (%,d files)", cold.quickTotal));
-        results.put("1e.   full hash", fmtMs(cold.fullNanos) + pct(cold.fullNanos, cold.totalNanos)
-                + String.format("  (%,d files)", cold.fullTotal));
-        results.put("1f.   cache persist + grouping tail", fmtMs(cold.tailNanos) + pct(cold.tailNanos, cold.totalNanos));
-        results.put("1g.   progress events / longest gap", String.format("%,d events, longest gap %s",
-                cold.events, fmtMs(cold.maxGapNanos)));
+        for (int r = 0; r < DEDUPE_RUNS; r++) {
+            DatabaseManager db = new DatabaseManager(root.resolve("dedupe-cache-" + r + ".db"));
+            db.migrate();
+            FileIndexRepository cache = new FileIndexRepository(db);
 
-        ScanTimings warm = timedScan(new DuplicateFinder(cache), data);
-        results.put("1h. Dedupe scan (warm cache) total", fmtMs(warm.totalNanos)
-                + String.format("  (cache hits %,d, hashed %,d)", warm.result.cacheHits(), warm.result.filesHashed()));
+            log("Running cold duplicate scan " + (r + 1) + "/" + DEDUPE_RUNS + "...");
+            coldRuns[r] = timedScan(new DuplicateFinder(cache), data);
+            log(String.format("  Cold run %d: total=%s, walk=%s, quick=%s, full=%s, tail=%s",
+                    r + 1,
+                    fmtMs(coldRuns[r].totalNanos),
+                    fmtMs(coldRuns[r].walkNanos),
+                    fmtMs(coldRuns[r].quickNanos),
+                    fmtMs(coldRuns[r].fullNanos),
+                    fmtMs(coldRuns[r].tailNanos)));
+
+            log("Running warm duplicate scan " + (r + 1) + "/" + DEDUPE_RUNS + "...");
+            warmRuns[r] = timedScan(new DuplicateFinder(cache), data);
+            log(String.format("  Warm run %d: total=%s", r + 1, fmtMs(warmRuns[r].totalNanos)));
+        }
+
+        long medTotal = median(coldRuns[0].totalNanos, coldRuns[1].totalNanos, coldRuns[2].totalNanos);
+        long medWalk = median(coldRuns[0].walkNanos, coldRuns[1].walkNanos, coldRuns[2].walkNanos);
+        long medGroup = median(coldRuns[0].groupNanos, coldRuns[1].groupNanos, coldRuns[2].groupNanos);
+        long medQuick = median(coldRuns[0].quickNanos, coldRuns[1].quickNanos, coldRuns[2].quickNanos);
+        long medFull = median(coldRuns[0].fullNanos, coldRuns[1].fullNanos, coldRuns[2].fullNanos);
+        long medTail = median(coldRuns[0].tailNanos, coldRuns[1].tailNanos, coldRuns[2].tailNanos);
+        long medWarm = median(warmRuns[0].totalNanos, warmRuns[1].totalNanos, warmRuns[2].totalNanos);
+
+        ScanTimings refCold = coldRuns[1]; // middle run metadata
+        ScanTimings refWarm = warmRuns[1];
+        long quickBytes = refCold.quickTotal > 1000 ? totalBytes : (mediumBytes + largeBytes);
+        long fullBytes = refCold.fullTotal > 1000 ? totalBytes : matchedFullBytes;
+
+        results.put("1a. Dedupe scan (cold) total [median of 3]", fmtMs(medTotal)
+                + String.format("  [runs: %s, %s, %s] -> %d groups, %d dup files, %,d hashed",
+                fmtMs(coldRuns[0].totalNanos), fmtMs(coldRuns[1].totalNanos), fmtMs(coldRuns[2].totalNanos),
+                refCold.result.groupCount(), refCold.result.duplicateFileCount(), refCold.result.filesHashed()));
+        results.put("1b.   directory walk [median of 3]", fmtMs(medWalk)
+                + String.format("  [runs: %s, %s, %s] (%,d files, %s)",
+                fmtMs(coldRuns[0].walkNanos), fmtMs(coldRuns[1].walkNanos), fmtMs(coldRuns[2].walkNanos),
+                refCold.walkCount, mb(totalBytes)));
+        results.put("1c.   size grouping + cache load [median of 3]", fmtMs(medGroup)
+                + String.format("  [runs: %s, %s, %s] (%,d files, %s)",
+                fmtMs(coldRuns[0].groupNanos), fmtMs(coldRuns[1].groupNanos), fmtMs(coldRuns[2].groupNanos),
+                refCold.walkCount, mb(totalBytes)));
+        results.put("1d.   quick hash [median of 3]", fmtMs(medQuick)
+                + String.format("  [runs: %s, %s, %s] (%,d files, %s)",
+                fmtMs(coldRuns[0].quickNanos), fmtMs(coldRuns[1].quickNanos), fmtMs(coldRuns[2].quickNanos),
+                refCold.quickTotal, mb(quickBytes)));
+        results.put("1e.   full hash [median of 3]", fmtMs(medFull)
+                + String.format("  [runs: %s, %s, %s] (%,d files, %s)",
+                fmtMs(coldRuns[0].fullNanos), fmtMs(coldRuns[1].fullNanos), fmtMs(coldRuns[2].fullNanos),
+                refCold.fullTotal, mb(fullBytes)));
+        results.put("1f.   cache persist + grouping tail [median of 3]", fmtMs(medTail)
+                + String.format("  [runs: %s, %s, %s]",
+                fmtMs(coldRuns[0].tailNanos), fmtMs(coldRuns[1].tailNanos), fmtMs(coldRuns[2].tailNanos)));
+        results.put("1g.   progress events / longest gap (run 2)", String.format("%,d events, longest gap %s",
+                refCold.events, fmtMs(refCold.maxGapNanos)));
+        results.put("1h. Dedupe scan (warm) total [median of 3]", fmtMs(medWarm)
+                + String.format("  [runs: %s, %s, %s] (cache hits %,d, hashed %,d)",
+                fmtMs(warmRuns[0].totalNanos), fmtMs(warmRuns[1].totalNanos), fmtMs(warmRuns[2].totalNanos),
+                refWarm.result.cacheHits(), refWarm.result.filesHashed()));
+
         deleteTree(data);
     }
 
@@ -173,17 +222,22 @@ public final class ScanBenchmark {
         long fullStart = firstEvent.getOrDefault("Full SHA-256 hashing", quickEnd);
         long fullEnd = lastEvent.getOrDefault("Full SHA-256 hashing", fullStart);
         t.walkNanos = walkEnd - start;
-        t.groupNanos = quickStart - walkEnd;
-        t.quickNanos = quickEnd - quickStart;
-        t.fullNanos = fullEnd - fullStart;
-        t.tailNanos = end - fullEnd - (fullStart - quickEnd);
-        t.tailNanos += 0;
+        t.groupNanos = Math.max(0L, quickStart - walkEnd);
+        t.quickNanos = Math.max(0L, quickEnd - quickStart);
+        t.fullNanos = Math.max(0L, fullEnd - fullStart);
+        t.tailNanos = Math.max(0L, end - fullEnd);
         t.walkCount = lastTotal.getOrDefault("Scanning files", 0);
         t.quickTotal = lastTotal.getOrDefault("Quick hashing", 0);
         t.fullTotal = lastTotal.getOrDefault("Full SHA-256 hashing", 0);
         t.events = events.get();
         t.maxGapNanos = Math.max(maxGap.get(), end - lastNanos.get());
         return t;
+    }
+
+    private static long median(long a, long b, long c) {
+        long[] arr = {a, b, c};
+        Arrays.sort(arr);
+        return arr[1];
     }
 
     private static final class ScanTimings {
@@ -201,8 +255,12 @@ public final class ScanBenchmark {
         long maxGapNanos;
     }
 
-    private long generateSmallFiles(Path dir) throws IOException {
+    private record SmallGenStats(long totalBytes, long duplicateSmallBytes) {
+    }
+
+    private SmallGenStats generateSmallFiles(Path dir) throws IOException {
         long total = 0;
+        long dupBytes = 0;
         byte[] buf = new byte[8192];
         for (int i = 0; i < SMALL_FILES; i++) {
             Path sub = dir.resolve(String.format("d%03d", i / SMALL_FILES_PER_DIR));
@@ -210,15 +268,18 @@ public final class ScanBenchmark {
                 Files.createDirectories(sub);
             }
             int size = 100 + 2 * (i % SMALL_DISTINCT_SIZES);
-            // Every 50th file duplicates the file created SMALL_DISTINCT_SIZES earlier (same size by construction)
-            long seed = (i % 50 == 0 && i >= SMALL_DISTINCT_SIZES) ? i - SMALL_DISTINCT_SIZES : i;
+            boolean isDupPair = (i % 50 == 0 && i >= SMALL_DISTINCT_SIZES);
+            long seed = isDupPair ? i - SMALL_DISTINCT_SIZES : i;
+            if (isDupPair) {
+                dupBytes += 2L * size;
+            }
             fill(buf, size, seed);
             try (OutputStream out = Files.newOutputStream(sub.resolve("f" + i + ".dat"))) {
                 out.write(buf, 0, size);
             }
             total += size;
         }
-        return total;
+        return new SmallGenStats(total, dupBytes);
     }
 
     /** Triples of equal size: A and B identical, C with same head/tail but a different middle. */
@@ -296,8 +357,10 @@ public final class ScanBenchmark {
             count = scanner.scan(flat).size();
             runs[r] = System.nanoTime() - s;
         }
-        Arrays.sort(runs);
-        results.put("2. FolderScanner, 10,000 files (median of 3)", fmtMs(runs[1]) + String.format("  (%,d files)", count));
+        long med = median(runs[0], runs[1], runs[2]);
+        results.put("2. FolderScanner, 10,000 files [median of 3]",
+                fmtMs(med) + String.format("  [runs: %s, %s, %s] (%,d files)",
+                        fmtMs(runs[0]), fmtMs(runs[1]), fmtMs(runs[2]), count));
         deleteTree(flat);
     }
 
@@ -320,8 +383,9 @@ public final class ScanBenchmark {
             batches.createBatchWithOperations("MANUAL", now, now, BATCH_OPERATIONS, 1024L * BATCH_OPERATIONS, records, ops);
             runs[r] = System.nanoTime() - s;
         }
-        Arrays.sort(runs);
-        results.put("3. BatchRepository, 5,000 ops (median of 3)", fmtMs(runs[1]));
+        long med = median(runs[0], runs[1], runs[2]);
+        results.put("3. BatchRepository, 5,000 ops [median of 3]",
+                fmtMs(med) + String.format("  [runs: %s, %s, %s]", fmtMs(runs[0]), fmtMs(runs[1]), fmtMs(runs[2])));
     }
 
     // ---------------------------------------------------------------- 4. Buffer sizes
@@ -332,14 +396,15 @@ public final class ScanBenchmark {
         int[] sizes = {64 * 1024, 256 * 1024, 1024 * 1024};
         hashWithBuffer(big, sizes[0]); // warm the OS cache once
         for (int size : sizes) {
-            long best = Long.MAX_VALUE;
-            for (int r = 0; r < 2; r++) {
+            long[] runs = new long[3];
+            for (int r = 0; r < 3; r++) {
                 long s = System.nanoTime();
                 hashWithBuffer(big, size);
-                best = Math.min(best, System.nanoTime() - s);
+                runs[r] = System.nanoTime() - s;
             }
-            results.put(String.format("4. SHA-256 of 1 GB, %d KB buffer (best of 2)", size / 1024),
-                    fmtMs(best) + String.format("  (%.0f MB/s)", 1024.0 / seconds(best)));
+            long med = median(runs[0], runs[1], runs[2]);
+            results.put(String.format("4. SHA-256 of 1 GB, %d KB buffer [median of 3]", size / 1024),
+                    fmtMs(med) + String.format("  (%.0f MB/s)", 1024.0 / seconds(med)));
         }
         Files.deleteIfExists(big);
     }
@@ -367,14 +432,16 @@ public final class ScanBenchmark {
         }
         hashAll(files, 4); // warm cache
         for (int threads : new int[]{1, 2, 4}) {
-            long best = Long.MAX_VALUE;
-            for (int r = 0; r < 2; r++) {
+            long[] runs = new long[3];
+            for (int r = 0; r < 3; r++) {
                 long s = System.nanoTime();
                 hashAll(files, threads);
-                best = Math.min(best, System.nanoTime() - s);
+                runs[r] = System.nanoTime() - s;
             }
-            results.put(String.format("5. Hash medium set (%d files, %s), %d thread(s)", files.size(), mb(bytes), threads),
-                    fmtMs(best) + String.format("  (%.0f MB/s)", (bytes / (double) MB) / seconds(best)));
+            long med = median(runs[0], runs[1], runs[2]);
+            results.put(String.format("5. Hash medium set (%d files, %s), %d thread(s) [median of 3]",
+                            files.size(), mb(bytes), threads),
+                    fmtMs(med) + String.format("  (%.0f MB/s)", (bytes / (double) MB) / seconds(med)));
         }
         deleteTree(dir);
     }
@@ -502,12 +569,8 @@ public final class ScanBenchmark {
         return ms >= 10_000 ? String.format("%,.1f s", ms / 1000.0) : String.format("%,.0f ms", ms);
     }
 
-    private static String pct(long part, long total) {
-        return total <= 0 ? "" : String.format(" (%.0f%%)", 100.0 * part / total);
-    }
-
     private static String mb(long bytes) {
-        return String.format("%,.0f MB", bytes / (double) MB);
+        return String.format("%,.1f MB", bytes / (double) MB);
     }
 
     private static void log(String msg) {

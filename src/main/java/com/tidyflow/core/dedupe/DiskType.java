@@ -6,7 +6,7 @@ import java.util.Locale;
  * Target storage type for duplicate scanning, controlling worker thread concurrency.
  */
 public enum DiskType {
-    AUTO("Auto", 2),
+    AUTO("Auto", 4),
     SSD("SSD", 4),
     HDD("HDD", 1);
 
