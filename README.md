@@ -6,7 +6,22 @@ TidyFlow is a Windows desktop application built with Java and JavaFX that organi
 
 ## Screenshots
 
-> **[TODO: Add application screenshots here — Dashboard tab, Organize tab, Duplicates tab, Rules tab, Automation tab, and History tab]**
+### Dashboard (Light & Dark Themes)
+| Light Theme | Dark Theme |
+| :---: | :---: |
+| ![Dashboard Light](docs/screenshots/dashboard-light.png) | ![Dashboard Dark](docs/screenshots/dashboard-dark.png) |
+
+### Core Workflows
+| Organize (Dry-Run Preview) | Duplicate Finder |
+| :---: | :---: |
+| ![Organize Tab](docs/screenshots/organize.png) | ![Duplicates Tab](docs/screenshots/duplicates.png) |
+
+| Custom Rule Editor & Tester | Background Automation & Updates |
+| :---: | :---: |
+| ![Rules Tab](docs/screenshots/rules.png) | ![Automation Tab](docs/screenshots/automation.png) |
+
+### Operation History & One-Click Undo
+![History Tab](docs/screenshots/history.png)
 
 ## Install
 
@@ -34,7 +49,7 @@ Confirm that the printed `Hash` value (case-insensitive) matches the correspondi
 2. **Organize**: Choose any folder, run a non-recursive dry-run scan against your prioritized rules, preview every planned file move, and apply moves in a single recorded batch.
 3. **Duplicates**: Scan folders (with optional subfolder recursion and minimum file size filter) using a fast three-stage hash pipeline, choose a keeper strategy, and move selected duplicate copies to the Windows Recycle Bin.
 4. **Rules**: Create, edit, duplicate, delete, reorder, and toggle rules (`Extension`, `Filename Regex`, `Minimum Size`, `Older Than N Days`), or test sample files live in the **Try it** dry-run box.
-5. **Automation**: Configure watched folders (`OFF`, `ASK`, `AUTO`), pause/resume background watching, inspect live watcher activity, set a daily schedule (`HH:mm`), and switch the application **Theme** (`SYSTEM`, `LIGHT`, `DARK`).
+5. **Automation**: Configure watched folders (`OFF`, `ASK`, `AUTO`), pause/resume background watching, inspect live watcher activity, set a daily schedule (`HH:mm`), switch the application **Theme** (`SYSTEM`, `LIGHT`, `DARK`), and check for or download verified updates (**Check for updates**).
 6. **History**: Browse past `Organize`, `Auto`, `Scheduled`, and `Dedupe` batches and undo any file move or entire batch with one click.
 
 ## Features
@@ -65,7 +80,7 @@ TidyFlow stores all configuration files, its SQLite database, single-instance lo
 
 Uninstalling TidyFlow **keeps** `%APPDATA%\TidyFlow` so your rules and operation history are preserved across reinstalls or upgrades. Delete `%APPDATA%\TidyFlow` manually if you want to remove all saved data.
 
-> **Important before uninstalling**: Open the **Automation** tab, uncheck **Start with Windows**, and click **Save settings** before uninstalling TidyFlow. Because startup registration is managed in your user registry (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`) at runtime, the Windows uninstaller does not remove that startup entry automatically.
+- **Automatic Startup Cleanup**: Uninstalling the Windows `.exe` installer automatically removes the `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\TidyFlow` startup entry (while preserving it during in-place version upgrades). Portable users can also remove the startup entry at any time by unchecking **Start with Windows** in the **Automation** tab or running `TidyFlow.exe --cleanup-autostart`.
 
 ## Restoring Removed Duplicates
 TidyFlow **never deletes files permanently**. Duplicate files removed in the **Duplicates** tab are sent to the **Windows Recycle Bin** (`action_type = TRASH`) and can be restored directly from the Windows Recycle Bin at any time.

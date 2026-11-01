@@ -23,6 +23,7 @@ build/
 !packaging/windows/icon.ico
 !src/main/resources/icons/*.png
 !src/main/resources/icons/*.ico
+!docs/screenshots/*.png
 hs_err_pid*
 replay_pid*
 
