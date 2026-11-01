@@ -36,16 +36,7 @@ public class OperationRepository {
 
     long insertWithConnection(Connection conn, long batchId, OperationRecord op) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-            ps.setLong(1, batchId);
-            ps.setString(2, op.actionType().name());
-            ps.setString(3, op.ruleName());
-            ps.setString(4, op.sourcePath().toString());
-            ps.setString(5, op.destPath().toString());
-            ps.setLong(6, op.sizeBytes());
-            ps.setString(7, op.status().name());
-            ps.setString(8, op.error());
-            ps.setString(9, op.createdAt().toString());
-            ps.setString(10, op.undoneAt() != null ? op.undoneAt().toString() : null);
+            bindOperation(ps, batchId, op);
             ps.executeUpdate();
 
             try (ResultSet keys = ps.getGeneratedKeys()) {
@@ -55,6 +46,32 @@ public class OperationRepository {
                 throw new SQLException("Inserting operation did not return a generated key");
             }
         }
+    }
+
+    void insertBatchWithConnection(Connection conn, long batchId, List<OperationRecord> operations) throws SQLException {
+        if (operations == null || operations.isEmpty()) {
+            return;
+        }
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+            for (OperationRecord op : operations) {
+                bindOperation(ps, batchId, op);
+                ps.addBatch();
+            }
+            ps.executeBatch();
+        }
+    }
+
+    private static void bindOperation(PreparedStatement ps, long batchId, OperationRecord op) throws SQLException {
+        ps.setLong(1, batchId);
+        ps.setString(2, op.actionType().name());
+        ps.setString(3, op.ruleName());
+        ps.setString(4, op.sourcePath().toString());
+        ps.setString(5, op.destPath().toString());
+        ps.setLong(6, op.sizeBytes());
+        ps.setString(7, op.status().name());
+        ps.setString(8, op.error());
+        ps.setString(9, op.createdAt().toString());
+        ps.setString(10, op.undoneAt() != null ? op.undoneAt().toString() : null);
     }
 
     public Optional<OperationRecord> findById(long id) throws SQLException {

@@ -9,10 +9,10 @@ import java.util.Locale;
  */
 public final class PathSafety {
 
-    private static final List<Path> PROTECTED_ROOTS = List.of(
-            Path.of("C:\\Windows"),
-            Path.of("C:\\Program Files"),
-            Path.of("C:\\Program Files (x86)")
+    private static final List<String> PROTECTED_ROOTS_LOWER = List.of(
+            "c:\\windows",
+            "c:\\program files",
+            "c:\\program files (x86)"
     );
 
     private PathSafety() {
@@ -25,12 +25,10 @@ public final class PathSafety {
         if (path == null) {
             return true;
         }
-        Path normalized = path.toAbsolutePath().normalize();
+        Path normalized = path.isAbsolute() ? path.normalize() : path.toAbsolutePath().normalize();
         String normalizedLower = normalized.toString().replace('/', '\\').toLowerCase(Locale.ROOT);
 
-        for (Path protectedRoot : PROTECTED_ROOTS) {
-            String rootLower = protectedRoot.toAbsolutePath().normalize()
-                    .toString().replace('/', '\\').toLowerCase(Locale.ROOT);
+        for (String rootLower : PROTECTED_ROOTS_LOWER) {
             if (normalizedLower.equals(rootLower) || normalizedLower.startsWith(rootLower + "\\")) {
                 return true;
             }

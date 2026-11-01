@@ -12,12 +12,38 @@ public record DedupeScanResult(
         int duplicateFileCount,
         long wastedBytes,
         int skippedUnreadableCount,
+        int skippedExcludedCount,
         int cacheHits,
-        int filesHashed
+        int filesHashed,
+        int totalScannedFiles,
+        long totalScannedBytes
 ) {
     public DedupeScanResult {
         Objects.requireNonNull(groups, "groups must not be null");
         groups = List.copyOf(groups);
+    }
+
+    public DedupeScanResult(
+            List<DuplicateGroup> groups,
+            int groupCount,
+            int duplicateFileCount,
+            long wastedBytes,
+            int skippedUnreadableCount,
+            int cacheHits,
+            int filesHashed
+    ) {
+        this(
+                groups,
+                groupCount,
+                duplicateFileCount,
+                wastedBytes,
+                skippedUnreadableCount,
+                0,
+                cacheHits,
+                filesHashed,
+                0,
+                0L
+        );
     }
 
     public static DedupeScanResult fromGroups(
@@ -25,6 +51,18 @@ public record DedupeScanResult(
             int skippedUnreadableCount,
             int cacheHits,
             int filesHashed
+    ) {
+        return fromGroups(groups, skippedUnreadableCount, 0, cacheHits, filesHashed, 0, 0L);
+    }
+
+    public static DedupeScanResult fromGroups(
+            List<DuplicateGroup> groups,
+            int skippedUnreadableCount,
+            int skippedExcludedCount,
+            int cacheHits,
+            int filesHashed,
+            int totalScannedFiles,
+            long totalScannedBytes
     ) {
         int groupCount = groups.size();
         int duplicateFileCount = 0;
@@ -41,8 +79,11 @@ public record DedupeScanResult(
                 duplicateFileCount,
                 wastedBytes,
                 skippedUnreadableCount,
+                skippedExcludedCount,
                 cacheHits,
-                filesHashed
+                filesHashed,
+                totalScannedFiles,
+                totalScannedBytes
         );
     }
 }

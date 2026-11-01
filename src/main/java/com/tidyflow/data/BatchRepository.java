@@ -45,9 +45,7 @@ public class BatchRepository {
             conn.setAutoCommit(false);
             try {
                 long batchId = insertBatch(conn, kind, startedAt);
-                for (OperationRecord op : operations) {
-                    operationRepository.insertWithConnection(conn, batchId, op);
-                }
+                operationRepository.insertBatchWithConnection(conn, batchId, operations);
                 updateTotalsWithConnection(conn, batchId, finishedAt, filesCount, bytesMoved);
                 conn.commit();
                 return batchId;

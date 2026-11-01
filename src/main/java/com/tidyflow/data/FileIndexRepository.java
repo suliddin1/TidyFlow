@@ -5,6 +5,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.HashMap;
@@ -36,7 +37,7 @@ public class FileIndexRepository {
     }
 
     public Optional<FileIndexEntry> findByPath(Path path) throws SQLException {
-        String normalizedPath = path.toAbsolutePath().normalize().toString();
+        String normalizedPath = normalizePathString(path);
         String sql = """
                 SELECT id, path, size_bytes, mtime, quick_hash, sha256, last_seen_at
                 FROM file_index
@@ -78,11 +79,15 @@ public class FileIndexRepository {
         }
 
         try (Connection conn = dbManager.openConnection()) {
+            try (Statement pragma = conn.createStatement()) {
+                pragma.execute("PRAGMA journal_mode = WAL;");
+                pragma.execute("PRAGMA synchronous = NORMAL;");
+            }
             boolean originalAutoCommit = conn.getAutoCommit();
             conn.setAutoCommit(false);
             try (PreparedStatement ps = conn.prepareStatement(UPSERT_SQL)) {
                 for (FileIndexEntry entry : entries) {
-                    ps.setString(1, entry.path().toAbsolutePath().normalize().toString());
+                    ps.setString(1, normalizePathString(entry.path()));
                     ps.setLong(2, entry.sizeBytes());
                     ps.setString(3, entry.mtime().toString());
                     ps.setString(4, entry.quickHash());
@@ -105,10 +110,19 @@ public class FileIndexRepository {
         return List.copyOf(findAll().values());
     }
 
+    private static String normalizePathString(Path path) {
+        if (path.isAbsolute()) {
+            return path.toString();
+        }
+        return path.toAbsolutePath().normalize().toString();
+    }
+
     private FileIndexEntry mapRow(ResultSet rs) throws SQLException {
+        Path rawPath = Path.of(rs.getString("path"));
+        Path path = rawPath.isAbsolute() ? rawPath : rawPath.toAbsolutePath().normalize();
         return new FileIndexEntry(
                 rs.getLong("id"),
-                Path.of(rs.getString("path")).toAbsolutePath().normalize(),
+                path,
                 rs.getLong("size_bytes"),
                 Instant.parse(rs.getString("mtime")),
                 rs.getString("quick_hash"),

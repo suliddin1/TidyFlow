@@ -6,9 +6,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.DosFileAttributes;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Stream;
 
@@ -27,19 +30,40 @@ public class FolderScanner {
 
         List<FileItem> items = new ArrayList<>();
         try (Stream<Path> entries = Files.list(folderPath)) {
-            for (Path entry : entries.toList()) {
-                if (shouldInclude(entry)) {
-                    BasicFileAttributes attrs = Files.readAttributes(entry, BasicFileAttributes.class);
-                    String fileName = entry.getFileName().toString();
-                    String extension = FileNameUtils.getExtension(fileName);
-                    items.add(new FileItem(
-                            entry,
-                            fileName,
-                            extension,
-                            attrs.size(),
-                            attrs.lastModifiedTime().toInstant()
-                    ));
+            Iterator<Path> iterator = entries.iterator();
+            while (iterator.hasNext()) {
+                Path entry = iterator.next();
+                String fileName = entry.getFileName().toString();
+                if (fileName.startsWith(".")) {
+                    continue;
                 }
+                String extension = FileNameUtils.getExtension(fileName);
+                if (isInProgressExtension(extension)) {
+                    continue;
+                }
+
+                BasicFileAttributes attrs;
+                boolean hidden;
+                try {
+                    DosFileAttributes dosAttrs = Files.readAttributes(entry, DosFileAttributes.class);
+                    attrs = dosAttrs;
+                    hidden = dosAttrs.isHidden();
+                } catch (UnsupportedOperationException e) {
+                    attrs = Files.readAttributes(entry, BasicFileAttributes.class);
+                    hidden = Files.isHidden(entry);
+                }
+
+                if (!attrs.isRegularFile() || hidden) {
+                    continue;
+                }
+
+                items.add(new FileItem(
+                        entry,
+                        fileName,
+                        extension,
+                        attrs.size(),
+                        attrs.lastModifiedTime().toInstant()
+                ));
             }
         }
 
@@ -47,20 +71,8 @@ public class FolderScanner {
         return List.copyOf(items);
     }
 
-    private boolean shouldInclude(Path entry) throws IOException {
-        if (!Files.isRegularFile(entry)) {
-            return false;
-        }
-        String fileName = entry.getFileName().toString();
-        if (fileName.startsWith(".") || Files.isHidden(entry)) {
-            return false;
-        }
-        String extension = FileNameUtils.getExtension(fileName);
-        return !isInProgressExtension(extension);
-    }
-
     public static boolean isInProgressExtension(String extension) {
-        return extension != null && IN_PROGRESS_EXTENSIONS.contains(extension.toLowerCase(java.util.Locale.ROOT));
+        return extension != null && IN_PROGRESS_EXTENSIONS.contains(extension.toLowerCase(Locale.ROOT));
     }
 
     public static boolean isInProgressFileName(String fileName) {
